@@ -1,6 +1,6 @@
 from urllib.request import urlopen
 from urllib.parse import quote
-from flask import Flask, make_response, jsonify, request
+from flask import Flask, make_response, request
 from flask_cors import CORS, cross_origin
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -8,7 +8,6 @@ from langchain_chroma import Chroma
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage, AIMessage
 from langchain.schema.messages import HumanMessage, AIMessage
-from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_community.document_loaders import DirectoryLoader,TextLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -23,7 +22,6 @@ import sys
 import uuid
 import importlib
 import config
-from operator import itemgetter
 from typing import List
 
 print(f"Arguments count: {len(sys.argv)}")
@@ -61,7 +59,6 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
     global store
     prefix = ""
     if session_id not in store:
-#        store[session_id] = ChatMessageHistory()
         store[session_id] = InMemoryHistory()
     for message in store[session_id].messages:
         if isinstance(message, AIMessage):
@@ -93,9 +90,6 @@ def initialize_chain(model=llm):
     else:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=constants.chunk_size, chunk_overlap=constants.chunk_overlap)
     splits = text_splitter.split_documents(docs)
-    #for split in splits:
-    #   print(split)
-    #print("\n\n")
     vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
@@ -165,7 +159,7 @@ def model():
     try:
         model = request.values['model']
         newmodel = ChatOpenAI(model=model)
-        chain = initialize_chain(newmodel)
+        initialize_chain(newmodel)
         print(newmodel.model_name)
         return make_response("Model set to: {newmode.model_name}" , 200)
     except Exception as e:
