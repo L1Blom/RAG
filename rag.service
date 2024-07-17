@@ -1,0 +1,13 @@
+[Unit]
+Description=RAG service
+After=multi-user.target
+
+[Service]
+Restart=on-failure
+RestartSec=5s 
+Type=idle  
+ExecStart=/home/leen/projects/rag/myragenv/bin/python /home/leen/projects/rag/ragservice.py <your identifier>
+User=leen
+
+[Install]  
+WantedBy=multi-user.target 
