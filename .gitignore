@@ -6,6 +6,8 @@ rag.py
 config.py
 data/
 constants/
-services/
+services/rag_*.service
 myragenv/
+launch.json
+.vscode
 __pycache__

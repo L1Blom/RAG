@@ -37,7 +37,9 @@ logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
 
 os.environ["OPENAI_API_KEY"] = config.APIKEY
 
-llm = ChatOpenAI(model="gpt-4o", temperature=constants.TEMPERATURE)
+modelText = "gpt-4o"
+temperatureText = constants.TEMPERATURE
+llm = ChatOpenAI(model=modelText, temperature=float(temperatureText))
 index = None
 chain = None
 store = {}
@@ -77,7 +79,7 @@ def encode_image(image_url):
     return image
 
 def initialize_chain(model=llm):
-    global index, chain, llm, store, session
+    global index, chain, store, session
 
     text_loader_kwargs={'autodetect_encoding': True}
 
@@ -105,7 +107,7 @@ def initialize_chain(model=llm):
         ]
     )
     history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_q_prompt
+        model, retriever, contextualize_q_prompt
     )
 
 ### Answer question ###
@@ -119,11 +121,11 @@ def initialize_chain(model=llm):
             ("human", "{input}"),
         ]
     )
-    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+    question_answer_chain = create_stuff_documents_chain(model, qa_prompt)
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    logging.info(f"Chain initialized: {model.name}")
+    logging.info(f"Chain initialized: {modelText}")
     chain = RunnableWithMessageHistory(
         rag_chain,
         get_session_history=get_session_history,
@@ -131,6 +133,7 @@ def initialize_chain(model=llm):
         history_messages_key="chat_history",
         output_messages_key="answer",
     )
+
 
 @app.route("/prompt", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID, methods=["GET", "POST"])
@@ -145,7 +148,6 @@ def process():
             config={"configurable": {"session_id": session}},
         )
         logging.info(f"Result: {result['answer']}")
-        #logging.info(f"Usage: {result}") 
         return make_response(result['answer'], 200)
     except Exception as e:
         logging.error(f"Error processing prompt: {str(e)}")
@@ -155,16 +157,32 @@ def process():
 @app.route("/prompt/"+constants.ID+"/model", methods=["GET", "POST"])
 @cross_origin()
 def model():
-    global chain
+    global chain, modelText, llm, temperatureText
     try:
-        model = request.values['model']
-        newmodel = ChatOpenAI(model=model)
-        initialize_chain(newmodel)
-        print(newmodel.model_name)
-        return make_response("Model set to: {newmode.model_name}" , 200)
+        modelText = request.values['model']
+        llm = ChatOpenAI(model=modelText, temperature=float(temperatureText))
+        initialize_chain(llm)
+        logging.info(f"Model set to: {modelText}")
+        return make_response("Model set to: {modelText}" , 200)
     except Exception as e:
         logging.error(f"Error setting model: {str(e)}")
         return make_response("Error setting model", 500)
+
+@app.route("/prompt/temp", methods=["GET", "POST"])
+@app.route("/prompt/"+constants.ID+"/temp", methods=["GET", "POST"])
+@cross_origin()
+def temp():
+    global chain, llm, temperatureText
+    try:
+        temperatureText = request.values['temp']
+        llm = ChatOpenAI(model=modelText, temperature=float(temperatureText))
+        initialize_chain(llm)
+        logging.info(f"Temperature set to {temperatureText}")
+        return make_response("Temperature set to: "+temperatureText , 200)
+    except Exception as e:
+        logging.error(f"Error setting temperature {str(e)}")
+        return make_response("Error setting temperature", 500)
+
 
 @app.route("/prompt/reload", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/reload", methods=["GET", "POST"])
@@ -211,7 +229,7 @@ def process_image():
         text = request.values['prompt']
         logging.info(f"Processing image: {image_url}, with prompt: {text}")
         bimage = encode_image(image_url)
-        chain = ChatOpenAI(model="gpt-4o", temperature=constants.TEMPERATURE)
+        chain = ChatOpenAI(model=modelText, temperature=float(temperatureText))
         msg = chain.invoke(
             [
                 AIMessage(content="Gerco's foto ontdekker"),
