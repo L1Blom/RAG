@@ -14,7 +14,7 @@ from flask import Flask, make_response, request
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS, cross_origin
 from langchain.schema.messages import HumanMessage, AIMessage
-from langchain.chains import create_retrieval_chain
+from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
@@ -104,21 +104,28 @@ def initialize_chain(thisModel=globvars['LLM']):
 
     text_loader_kwargs={'autodetect_encoding': True}
 
-    loader = DirectoryLoader(constants.DATA_DIR, glob=constants.DATA_GLOB, loader_cls=TextLoader, loader_kwargs=text_loader_kwargs)
+    loader = DirectoryLoader(constants.DATA_DIR, 
+                             glob=constants.DATA_GLOB, 
+                             loader_cls=TextLoader,
+                             loader_kwargs=text_loader_kwargs)
     docs = loader.load()
     print(len(docs))
 
     if 'LANGUAGE' in constants.__dict__:
-        text_splitter = RecursiveCharacterTextSplitter.from_language(language=Language[constants.LANGUAGE], chunk_size=constants.chunk_size, chunk_overlap=constants.chunk_overlap)
+        text_splitter = RecursiveCharacterTextSplitter.from_language(
+            language=Language[constants.LANGUAGE], 
+            chunk_size=constants.chunk_size, 
+            chunk_overlap=constants.chunk_overlap)
     else:
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=constants.chunk_size, chunk_overlap=constants.chunk_overlap)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=constants.chunk_size, 
+            chunk_overlap=constants.chunk_overlap)
     splits = text_splitter.split_documents(docs)
     vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
     ### Contextualize question ###
     contextualize_q_system_prompt = constants.contextualize_q_system_prompt
-    
     contextualize_q_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", contextualize_q_system_prompt),
@@ -158,12 +165,8 @@ def initialize_chain(thisModel=globvars['LLM']):
 @app.route("/prompt", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID, methods=["GET", "POST"])
 @cross_origin()
-def process():
-    """_summary_
-
-    Returns:
-        _type_: _description_
-    """   
+def process() -> make_response:
+    """ The prompt processor """
     try:
         query = request.values['prompt']
         logging.info("Query: %s", query)
@@ -213,7 +216,7 @@ def temp() -> make_response:
 @app.route("/prompt/reload", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/reload", methods=["GET", "POST"])
 @cross_origin()
-def reload():
+def reload() -> make_response:
     """ Reload documents to the chain """
     try:
         initialize_chain()
@@ -234,7 +237,7 @@ def clear() -> make_response:
 @app.route("/prompt/cache", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/cache", methods=["GET", "POST"])
 @cross_origin()
-def cache():
+def cache() -> make_response:
     """ Return cache contents """
     content = ""
     if globvars['Session'] in globvars['Store']:
@@ -250,7 +253,7 @@ def cache():
 @app.route("/prompt/image", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
 @cross_origin()
-def process_image():
+def process_image() -> make_response:
     """ Send image to ChatGPT and send prompt to analyse contents """
     try:
         image_url = quote(request.values['image'], safe='/:?=&')
