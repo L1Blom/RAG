@@ -1,34 +1,21 @@
-"""_summary_
-RAG for your own documents
-"""
-import logging
-import os
-import sys
-import uuid
-import importlib
-import base64
-from typing import List
-from urllib.request import urlopen
-from urllib.parse import quote
-from flask import Flask, make_response, request
-from werkzeug.exceptions import HTTPException
-from flask_cors import CORS, cross_origin
-from langchain.schema.messages import HumanMessage, AIMessage
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_chroma import Chroma
-from langchain_community.document_loaders import DirectoryLoader,TextLoader
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.messages import BaseMessage
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+# RAG for Your Own Documents
 
-import config
+This script sets up a Flask web application that allows users to interact with a Retrieval-Augmented Generation (RAG) system for their own documents. The system uses OpenAI's language models to process and answer queries based on the documents provided. The application supports various functionalities such as changing the model, adjusting the temperature, reloading documents, and processing images.
 
+## Dependencies
+
+The script imports several libraries and modules:
+
+- Standard libraries: `logging`, `os`, `sys`, `uuid`, `importlib`, `base64`
+- Flask and related libraries: `Flask`, `make_response`, `request`, `HTTPException`, `CORS`, `cross_origin`
+- LangChain and related libraries: `HumanMessage`, `AIMessage`, `create_retrieval_chain`, `create_history_aware_retriever`, `create_stuff_documents_chain`, `Chroma`, `DirectoryLoader`, `TextLoader`, `BaseChatMessageHistory`, `BaseMessage`, `BaseModel`, `Field`, `ChatPromptTemplate`, `MessagesPlaceholder`, `RunnableWithMessageHistory`, `ChatOpenAI`, `OpenAIEmbeddings`, `RecursiveCharacterTextSplitter`, `Language`
+- Custom configuration: `config`
+
+## Initialization
+
+The script starts by printing the command-line arguments and loading the project-specific constants module. It then sets up the Flask application and configures logging.
+
+```python
 print(f"Arguments count: {len(sys.argv)}")
 for i, arg in enumerate(sys.argv):
     print(f"Argument {i:>6}: {arg}")
@@ -36,27 +23,39 @@ PROJECT=sys.argv[1]
 constants = importlib.import_module("constants.constants_"+PROJECT)
 app = Flask(__name__)
 CORS(app)
+```
 
+## Context Processor
+
+A context processor is defined to store global variables in a Flask-friendly way.
+
+```python
 @app.context_processor
 def context_processor():
-    """ Store the globals in a Fals way """
+    """ Store the globals in a Flask way """
     return dict()
+```
 
-# Configureer logging
-logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
+## Global Variables
 
-os.environ["OPENAI_API_KEY"] = config.APIKEY
+Global variables are initialized, including the language model, temperature, and session ID.
 
+```python
 globvars = context_processor()
-globvars['ModelText']   = constants.MODELTEXT
+globvars['ModelText']   = "gpt-4o"
 globvars['Temperature'] = float(constants.TEMPERATURE)
 globvars['Chain']       = None
 globvars['Store']       = {}
 globvars['Session']     = uuid.uuid4()
-globvars['LLM']         = ChatOpenAI(model=globvars['ModelText'],
+globvars['LLM']         = ChatOpenAI(model=globvars['ModelText'], 
                                      temperature=globvars['Temperature'])
+```
 
+## In-Memory History
 
+A class for in-memory chat message history is defined.
+
+```python
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -68,7 +67,13 @@ class InMemoryHistory(BaseChatMessageHistory, BaseModel):
 
     def clear(self) -> None:
         self.messages = []
+```
 
+## Session History
+
+A function to get the session history is defined.
+
+```python
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
     """ Memory history store
 
@@ -87,10 +92,15 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
             prefix = "AI"
         else:
             prefix = "User"
-        logging.info("%s: %s",prefix, message.content)
+        print("%s: %s\n",prefix, message.content)
     return Store[session_id]
+```
 
+## Image Encoding
 
+A function to encode images to base64 is defined.
+
+```python
 def encode_image(image_url) -> base64:
     """ Encode image to base64 """
     logging.info("Encoding image: %s",image_url)
@@ -98,7 +108,13 @@ def encode_image(image_url) -> base64:
         f = url.read()
         image = base64.b64encode(f).decode("utf-8")
     return image
+```
 
+## Chain Initialization
+
+A function to initialize the chain for accessing the language model is defined.
+
+```python
 def initialize_chain(thisModel=globvars['LLM']):
     """ initialize the chain to access the LLM """
 
@@ -160,8 +176,17 @@ def initialize_chain(thisModel=globvars['LLM']):
         history_messages_key="chat_history",
         output_messages_key="answer",
     )
+```
 
+## Routes
 
+Several routes are defined to handle different functionalities:
+
+### Process Prompt
+
+Handles the main prompt processing.
+
+```python
 @app.route("/prompt", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID, methods=["GET", "POST"])
 @cross_origin()
@@ -179,7 +204,13 @@ def process() -> make_response:
     except HTTPException as e:
         logging.error("Error processing prompt: %s",str(e))
         return make_response("Error processing prompt", 500)
+```
 
+### Change Model
+
+Handles changing the language model.
+
+```python
 @app.route("/prompt/model", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/model", methods=["GET", "POST"])
 @cross_origin()
@@ -195,7 +226,13 @@ def model() -> make_response:
     except HTTPException as e:
         logging.error("Error setting model: %s", str(e))
         return make_response("Error setting model", 500)
+```
 
+### Change Temperature
+
+Handles changing the temperature of the language model.
+
+```python
 @app.route("/prompt/temp", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/temp", methods=["GET", "POST"])
 @cross_origin()
@@ -211,8 +248,13 @@ def temp() -> make_response:
     except HTTPException as e:
         logging.error("Error setting temperature %s", str(e))
         return make_response("Error setting temperature", 500)
+```
 
+### Reload Documents
 
+Handles reloading documents into the chain.
+
+```python
 @app.route("/prompt/reload", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/reload", methods=["GET", "POST"])
 @cross_origin()
@@ -224,8 +266,13 @@ def reload() -> make_response:
     except HTTPException as e:
         logging.error("Error reloading text: %s" ,str(e))
         return make_response("Error reloading text", 500)
+```
 
+### Clear Cache
 
+Handles clearing the cache.
+
+```python
 @app.route("/prompt/clear", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/clear", methods=["GET", "POST"])
 @cross_origin()
@@ -233,7 +280,13 @@ def clear() -> make_response:
     """ Clear the cache """
     globvars['Store'].clear()
     return make_response("History deleted", 200)
+```
 
+### Return Cache Contents
+
+Handles returning the contents of the cache.
+
+```python
 @app.route("/prompt/cache", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/cache", methods=["GET", "POST"])
 @cross_origin()
@@ -248,21 +301,24 @@ def cache() -> make_response:
                 prefix = "User"
             content += prefix +  ":" + str(message) + "\n"
     return make_response(content, 200)
+```
 
+### Process Image
 
+Handles processing an image and sending it to ChatGPT for analysis.
+
+```python
 @app.route("/prompt/image", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
 @cross_origin()
 def process_image() -> make_response:
     """ Send image to ChatGPT and send prompt to analyse contents """
-    if globvars['ModerText'] != 'gpt-40':
-        return make_response("Image processing only available in gpt-4o", 500)
     try:
         image_url = quote(request.values['image'], safe='/:?=&')
         text = request.values['prompt']
         logging.info("Processing image: %s, with prompt: %s", image_url, text)
         bimage = encode_image(image_url)
-        chain = ChatOpenAI(model=globvars['ModelText'],
+        chain = ChatOpenAI(model=globvars['ModelText'], 
                            temperature=globvars['Temperature'])
         msg = chain.invoke(
             [
@@ -277,7 +333,16 @@ def process_image() -> make_response:
     except HTTPException as e:
         logging.error("Error processing image: %s", str(e))
         return make_response("Error processing image", 500)
+```
 
+## Main
+
+The script initializes the chain and starts the Flask application.
+
+```python
 if __name__ == '__main__':
     initialize_chain()
     app.run(port=constants.PORT, debug=constants.DEBUG, host="0.0.0.0")
+```
+
+This script provides a comprehensive setup for a RAG system using Flask and OpenAI's language models, allowing for various functionalities such as model and temperature adjustments, document reloading, and image processing.

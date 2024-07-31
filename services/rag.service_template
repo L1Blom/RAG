@@ -5,8 +5,8 @@ After=multi-user.target
 [Service]
 Restart=on-failure
 RestartSec=5s 
-Type=idle  
-ExecStart=/home/leen/projects/rag/myragenv/bin/python /home/leen/projects/rag/ragservice.py <your identifier>
+Type=idle
+ExecStart=<your project dir><your virtual environment>/bin/python <your project dir>/ragservice.py <your identifier>
 User=leen
 
 [Install]  
