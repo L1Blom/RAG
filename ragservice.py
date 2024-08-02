@@ -13,6 +13,7 @@ from urllib.parse import quote
 from flask import Flask, make_response, request
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS, cross_origin
+import openai
 from langchain.schema.messages import HumanMessage, AIMessage
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
@@ -46,6 +47,11 @@ def context_processor():
 logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
 
 os.environ["OPENAI_API_KEY"] = config.APIKEY
+client     = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY'))
+models     = client.models.list().to_dict()['data']
+modelnames = []
+for modelitem in models:
+    modelnames.append(modelitem['id'])
 
 globvars = context_processor()
 globvars['ModelText']   = constants.MODELTEXT
@@ -57,6 +63,13 @@ globvars['LLM']         = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
 
 
+def check_model_existence(modelText) -> bool:
+    """ chack if model is present in OpenAI's models """
+    if modelText in modelnames:
+        return True
+    else:
+        return False
+   
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -99,9 +112,14 @@ def encode_image(image_url) -> base64:
         image = base64.b64encode(f).decode("utf-8")
     return image
 
-def initialize_chain(thisModel=globvars['LLM']):
+def initialize_chain():
     """ initialize the chain to access the LLM """
 
+    if not check_model_existence(globvars['ModelText']):
+        logging.error("Model %s not found in OpenAI's models",globvars['ModelText'])
+        return False
+
+    this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
 
     loader = DirectoryLoader(constants.DATA_DIR, 
@@ -109,7 +127,7 @@ def initialize_chain(thisModel=globvars['LLM']):
                              loader_cls=TextLoader,
                              loader_kwargs=text_loader_kwargs)
     docs = loader.load()
-    print(len(docs))
+    logging.info("Context loaded from %s documents",str(len(docs)))
 
     if 'LANGUAGE' in constants.__dict__:
         text_splitter = RecursiveCharacterTextSplitter.from_language(
@@ -120,6 +138,7 @@ def initialize_chain(thisModel=globvars['LLM']):
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=constants.chunk_size, 
             chunk_overlap=constants.chunk_overlap)
+
     splits = text_splitter.split_documents(docs)
     vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
@@ -134,7 +153,7 @@ def initialize_chain(thisModel=globvars['LLM']):
         ]
     )
     history_aware_retriever = create_history_aware_retriever(
-        thisModel, retriever, contextualize_q_prompt
+        this_model, retriever, contextualize_q_prompt
     )
 
     ### Answer question ###
@@ -148,11 +167,10 @@ def initialize_chain(thisModel=globvars['LLM']):
             ("human", "{input}"),
         ]
     )
-    question_answer_chain = create_stuff_documents_chain(thisModel, qa_prompt)
+    question_answer_chain = create_stuff_documents_chain(this_model, qa_prompt)
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    logging.info("Chain initialized: %s",globvars['ModelText'])
     globvars['Chain'] = RunnableWithMessageHistory(
         rag_chain,
         get_session_history=get_session_history,
@@ -160,7 +178,8 @@ def initialize_chain(thisModel=globvars['LLM']):
         history_messages_key="chat_history",
         output_messages_key="answer",
     )
-
+    logging.info("Chain initialized: %s",globvars['ModelText'])
+    return True
 
 @app.route("/prompt", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID, methods=["GET", "POST"])
@@ -186,12 +205,19 @@ def process() -> make_response:
 def model() -> make_response:
     """ Change LLM model """
     try:
-        globvars['ModelText'] = request.values['model']
+        this_model = request.values['model']
+        if not check_model_existence(this_model):
+            error_text = "Model "+this_model+" not found in OpenAI's models"
+            logging.error(error_text)
+            return make_response(error_text, 500)
+
+        globvars['ModelText'] = this_model
         globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'], 
                                      temperature=globvars['Temperature'])
-        initialize_chain(globvars['LLM'])
-        logging.info("Model set to: %s", globvars['ModelText'])
-        return make_response("Model set to: " + globvars['ModelText'] , 200)
+        initialize_chain()
+        error_text = "Model set to: " + globvars['ModelText']
+        logging.info(error_text)
+        return make_response( error_text, 200)
     except HTTPException as e:
         logging.error("Error setting model: %s", str(e))
         return make_response("Error setting model", 500)
@@ -205,7 +231,7 @@ def temp() -> make_response:
         globvars['Temperature'] = float(request.values['temp'])
         globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'], 
                                      temperature=globvars['Temperature'])
-        initialize_chain(globvars['LLM'])
+        initialize_chain()
         logging.info("Temperature set to %s", str(globvars['Temperature']))
         return make_response("Temperature set to: " + str(globvars['Temperature']) , 200)
     except HTTPException as e:
@@ -255,7 +281,8 @@ def cache() -> make_response:
 @cross_origin()
 def process_image() -> make_response:
     """ Send image to ChatGPT and send prompt to analyse contents """
-    if globvars['ModerText'] != 'gpt-40':
+    logging.info(globvars['ModelText'])
+    if globvars['ModelText'] != 'gpt-4o':
         return make_response("Image processing only available in gpt-4o", 500)
     try:
         image_url = quote(request.values['image'], safe='/:?=&')
@@ -279,5 +306,7 @@ def process_image() -> make_response:
         return make_response("Error processing image", 500)
 
 if __name__ == '__main__':
-    initialize_chain()
-    app.run(port=constants.PORT, debug=constants.DEBUG, host="0.0.0.0")
+    if initialize_chain():
+        app.run(port=constants.PORT, debug=constants.DEBUG, host="0.0.0.0")
+    else:
+        logging.error("Initialization of chain failed")

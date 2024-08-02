@@ -5,20 +5,51 @@ RAG is a template service for a retrieval-augmented generator based on the examp
 ## Installation
 
 1. Clone https://github.com/L1Blom/rag to your project directory
-2. Choose an ID for your instance, like MyDocs
-3. Create a constants/ dir under the project and copy constants_id.py to it as constants_MyDocs.py
-4. Change the contents of this file to reflect your situation
-5. Create a data/ dir and create a MyDocs/ directory in it
-6. Add the files for your RAG context, like text-files
-7. Create a Python virtual environment for your project (optional)
-8. Modify the example services/rag.service_template file to point to the right place of your project directory
-9. Copy the services file to /etc/systed/system/rag_MyDocs.service
-10. Enable and start the service
+2. Move config.py_example to config.py and add your API Key
+3. Choose an ID for your instance, like MyDocs
+4. Copy constants/constants.py to it as constants_MyDocs.py
+5. Change the contents of this file to reflect your situation
+6. Create a data/ dir and create a MyDocs/ directory in it
+7. Add the files for your RAG context, like text-files
+8. Create a Python virtual environment for your project (optional)
+9. Modify the example services/rag.service_template file to point to the right place of your project directory
+10. Copy the services file to /etc/systed/system/rag_MyDocs.service
+11. Enable and start the service
 
 ```bash
 sudo systemctl enable rag_MyDocs
 sudo systemctl start rag_MyDocs
 sudo systemctl status rag_MyDocs
+```
+## Constants file
+
+```python
+# simple string like "mydata"
+ID="<your identifier" 
+# any unused port, will run the Flask server
+PORT=9100
+# Set to True if you want to enable Flask debug
+DEBUG=False
+# Any other level will make it less verbose
+LOGGING_LEVEL="INFO"
+# Directory that will be scanned for files to be added to the context
+DATA_DIR="/home/data"
+# All the file extentions you want to be part of the context, see LangChain documentation
+DATA_GLOB="*.txt" 
+# The lower, the more precise. Needs to be between 0.0 and 2.0
+TEMPERATURE=0.0 
+# Influences the way answers are produced
+contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+    )
+# Influences the way answers are produced
+system_prompt = ( # choose your language, English works best
+        "You are a chatbot and gives answer in not more than 3 sentences"
+    )
+chunk_size=1000    # depending on your data, seel LangChain documentation
+chunk_overlap=100  # idem
 ```
 
 ## Commands
@@ -32,12 +63,13 @@ All calls support POST and GET.
 2. /prompt/<ID>/model
     Parameter: model (string)
     Your model to be used, like "gpt-4o"
-    Currently no checking on valid models. Can result in http 500 error (non-fatal)
+    Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
 
 3. /prompt/<ID>/temp
     Parameter: temp (string, will be cast to float)
     Temperature setting, between 0.0 and 2.0
     Settings above 1.0 can give significant halicunations and degrades performance too.
+    Timeout can result in http 408 error (non-fatal)
 
 4. /prompt/<ID>/reload
     Parameters: none
@@ -54,7 +86,7 @@ All calls support POST and GET.
 7. /prompt/<ID>/image
     Parameters: prompt (string), image (URL to image)
     Uploads the image to openAI and use prompt to get the desired contents like: 'What is the mood of the persons?'
-    Note: only works ik model is 'gpt-4o' 
+    Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
 
 ## Usage
 
@@ -66,7 +98,6 @@ Model set to: gpt-4o(your virtual env)
 curl -X POST --data-urlencode "prompt=your question?" http://<your server>:<your port>/prompt/<ID>
 Your answer based on the context files provided in data/<ID>
 ```
-
 
 ## Contributing
 

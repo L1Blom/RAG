@@ -5,7 +5,7 @@ afk.py
 rag.py
 config.py
 data/
-constants/
+constants/constants_*.py
 services/rag_*.service
 myragenv/
 launch.json
