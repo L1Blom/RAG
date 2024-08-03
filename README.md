@@ -5,7 +5,7 @@ RAG Service is a template service for a retrieval-augmented generator based on t
 ## Technologies
 
 [![Used in this project](https://skills.thijs.gg/icons?i=vscode,py,flask,ai,md,linux,bash,nginx,pylint,git,raspberrypi&theme=light)](https://skillicons.dev)
-
+[![My Skills](https://skillicons.dev/icons?i=js,html,css,wasm)](https://skillicons.dev)
 
 ## Installation
 
