@@ -7,9 +7,9 @@ RAG is a template service for a retrieval-augmented generator based on the examp
 1. Clone https://github.com/L1Blom/rag to your project directory
 2. Move config.py_example to config.py and add your API Key
 3. Choose an ID for your instance, like MyDocs
-4. Copy constants/constants.py to it as constants_MyDocs.py
+4. Copy constants/constants.py to constants_MyDocs.py
 5. Change the contents of this file to reflect your situation
-6. Create a data/ dir and create a MyDocs/ directory in it
+6. Create a data/ directory and create a MyDocs/ directory in it
 7. Add the files for your RAG context, like text-files
 8. Create a Python virtual environment for your project (optional)
 9. Modify the example services/rag.service_template file to point to the right place of your project directory
@@ -56,7 +56,7 @@ chunk_overlap=100  # idem
 
 All calls support POST and GET.
 
-1. /prompt/<ID>
+1. /prompt/\<ID\>
     Parameter: prompt (string)
     Your prompt to be send to openAI
 
