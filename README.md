@@ -2,6 +2,10 @@
 
 RAG Service is a template service for a retrieval-augmented generator based on the examples of LangChain. See: [Build a Retrieval Augmented Generation (RAG) App](https://python.langchain.com/v0.2/docs/tutorials/rag/)
 
+## Technologies
+
+[Used in this project](https://skills.thijs.gg/icons?i=vscode,py,flask,ai,md,linux,bash,nginx,pylint,git,raspberrypi&theme=light)]
+
 ## Installation
 
 1. Clone https://github.com/L1Blom/rag to your project directory
@@ -101,9 +105,12 @@ chunk_overlap=100  # idem
 ```
 
 ## TODO's and wishes
+- Unit tests
 - More file formats like PDF
+- Saving the vectorstore
 - Upload files
 - Other API's than OpenAI and other LLM's
+- A simple frontend from the GitHub community
 
 
 ## Contributing
