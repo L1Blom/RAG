@@ -21,6 +21,54 @@ sudo systemctl enable rag_MyDocs
 sudo systemctl start rag_MyDocs
 sudo systemctl status rag_MyDocs
 ```
+
+## Commands
+
+All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
+
+1. /prompt/\<ID\>/
+    Parameter: prompt (string)
+    Your prompt to be send to openAI
+
+2. /prompt/\<ID\>/model
+    Parameter: model (string)
+    Your model to be used, like "gpt-4o"
+    Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
+
+3. /prompt/\<ID\>/temp
+    Parameter: temp (string, will be cast to float)
+    Temperature setting, between 0.0 and 2.0
+    Settings above 1.0 can give significant halicunations and degrades performance too.
+    Timeout can result in http 408 error (non-fatal)
+
+4. /prompt/\<ID\>/reload
+    Parameters: none
+    After adding files to your data directory, use this to reload the vector store
+
+5. /prompt/\<ID\>/clear
+    Paramters: none
+    Clears the cache, the in-memory history
+
+6. /prompt/\<ID\>/cache
+    Paramaters: none
+    Prints the cache contents to the response object
+
+7. /prompt/\<ID\>/image
+    Parameters: prompt (string), image (URL to image)
+    Uploads the image to openAI and use prompt to get the desired contents like: 'What is the mood of the persons?'
+    Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
+
+## Usage
+
+```bash
+# change the model
+curl -X POST --data-urlencode "model=gpt-4o" http://<your server>:<your port>/prompt/<ID>/model
+Model set to: gpt-4o(your virtual env) 
+# prompt to your data
+curl -X POST --data-urlencode "prompt=your question?" http://<your server>:<your port>/prompt/<ID>
+Your answer based on the context files provided in data/<ID>
+```
+
 ## Constants file
 
 ```python
@@ -52,52 +100,11 @@ chunk_size=1000    # depending on your data, seel LangChain documentation
 chunk_overlap=100  # idem
 ```
 
-## Commands
+## TODO's and wishes
+- More file formats like PDF
+- Upload files
+- Other API's than OpenAI and other LLM's
 
-All calls support POST and GET.
-
-1. /prompt/\<ID\>
-    Parameter: prompt (string)
-    Your prompt to be send to openAI
-
-2. /prompt/<ID>/model
-    Parameter: model (string)
-    Your model to be used, like "gpt-4o"
-    Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
-
-3. /prompt/<ID>/temp
-    Parameter: temp (string, will be cast to float)
-    Temperature setting, between 0.0 and 2.0
-    Settings above 1.0 can give significant halicunations and degrades performance too.
-    Timeout can result in http 408 error (non-fatal)
-
-4. /prompt/<ID>/reload
-    Parameters: none
-    After adding files to your data directory, use this to reload the vector store
-
-5. /prompt/<ID>/clear
-    Paramters: none
-    Clears the cache, the in-memory history
-
-6. /prompt/<ID>/cache
-    Paramaters: none
-    Prints the cache contents to the response object
-
-7. /prompt/<ID>/image
-    Parameters: prompt (string), image (URL to image)
-    Uploads the image to openAI and use prompt to get the desired contents like: 'What is the mood of the persons?'
-    Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
-
-## Usage
-
-```bash
-# change the model
-curl -X POST --data-urlencode "model=gpt-4o" http://<your server>:<your port>/prompt/<ID>/model
-Model set to: gpt-4o(your virtual env) 
-# prompt to your data
-curl -X POST --data-urlencode "prompt=your question?" http://<your server>:<your port>/prompt/<ID>
-Your answer based on the context files provided in data/<ID>
-```
 
 ## Contributing
 
