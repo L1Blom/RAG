@@ -8,7 +8,7 @@ RAG Service is a template service for a retrieval-augmented generator based on t
 
 ## Installation
 
-1. Clone https://github.com/L1Blom/rag to your project directory
+1. Clone [L1Blom/rag](https://github.com/L1Blom/rag) to your project directory
 2. Move config.py_example to config.py and add your API Key
 3. Choose an ID for your instance, like MyDocs
 4. Copy constants/constants.py to constants_MyDocs.py
@@ -104,14 +104,60 @@ chunk_size=1000    # depending on your data, seel LangChain documentation
 chunk_overlap=100  # idem
 ```
 
+## Unit tests
+
+To run the unit tests, run the program in the project directory using the ID '_unittest'.
+It will start a local RAG service accessible at port 8888 (see constants__unittest.py for all defaults).
+
+```bash
+<your virtual environment/bin/python ragservice.py _unittest
+Arguments count: 2
+Argument      0: ragservice.py
+Argument      1: _unittest
+INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
+INFO:root:Context loaded from 1 documents
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:httpx:HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+INFO:root:Chain initialized: gpt-4o
+ * Serving Flask app 'ragservice'
+ * Debug mode: off
+INFO:werkzeug:WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8888
+ * Running on http://192.168.2.200:8888
+INFO:werkzeug:Press CTRL+C to quit
+```
+
+Now you are able to run the unit tests:
+
+```bash
+<your virtual environament>/bin/python ragservice_unittest.py -v
+test_chache_content (__main__.RagServiceMethods.test_chache_content)
+Test to print the contents of the cache ... ok
+test_clear (__main__.RagServiceMethods.test_clear)
+Test to clear the cache ... ok
+test_model (__main__.RagServiceMethods.test_model)
+Test model setting, correct or incorrect model according to OpenAI ... ok
+test_prompt (__main__.RagServiceMethods.test_prompt)
+Test prompt ... ok
+test_reload (__main__.RagServiceMethods.test_reload)
+Test reload of the data ... ok
+test_temperature (__main__.RagServiceMethods.test_temperature)
+Test to set temparature too high, low, within boundaries 0.0 and 2.0 ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 3.761s
+
+OK
+```
+
 ## TODO's and wishes
-- Unit tests
+
 - More file formats like PDF
 - Saving the vectorstore
 - Upload files
 - Other API's than OpenAI and other LLM's
 - A simple frontend from the GitHub community
-
 
 ## Contributing
 

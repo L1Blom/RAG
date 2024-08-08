@@ -1,9 +1,10 @@
-""" Example constants file, to be imported from <your project dir>/constants """
+""" Constants file for unit testing """
+# Example constants file, to be imported from <your project dir>/constants
 
 # simple string like "mydata"
-ID="<your identifier"
+ID="_unittest"
 # any unused port, will run the Flask server
-PORT=7100
+PORT=8888
 # Set to True if you want to debug
 DEBUG=False
 # Any other level will make it less verbose
@@ -11,7 +12,7 @@ LOGGING_LEVEL="INFO"
 # The LLM to be used as listed in OpenAI
 MODELTEXT="gpt-4o"
 # Directory that will be scanned for files to be added to the context
-DATA_DIR="/home/data"
+DATA_DIR="data/_unittest"
 # All the file extentions you want to be part of the context, see LangChain documentation
 DATA_GLOB="*.txt"
 # the lower, the more precise. TODO can be changed dynamically

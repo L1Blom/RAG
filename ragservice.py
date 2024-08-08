@@ -34,7 +34,9 @@ print(f"Arguments count: {len(sys.argv)}")
 for i, arg in enumerate(sys.argv):
     print(f"Argument {i:>6}: {arg}")
 PROJECT=sys.argv[1]
-constants = importlib.import_module("constants.constants_"+PROJECT)
+constants_import = "constants.constants_"+PROJECT
+
+constants = importlib.import_module(constants_import)
 app = Flask(__name__)
 CORS(app)
 
@@ -69,7 +71,6 @@ def check_model_existence(modelText) -> bool:
         return True
     else:
         return False
-   
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -90,7 +91,7 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
 
     Returns:
         BaseChatMessageHistory: the reference to the store
-    """    
+    """
     prefix = ""
     Store = globvars['Store']
     if session_id not in Store:
@@ -122,8 +123,8 @@ def initialize_chain():
     this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
 
-    loader = DirectoryLoader(constants.DATA_DIR, 
-                             glob=constants.DATA_GLOB, 
+    loader = DirectoryLoader(constants.DATA_DIR,
+                             glob=constants.DATA_GLOB,
                              loader_cls=TextLoader,
                              loader_kwargs=text_loader_kwargs)
     docs = loader.load()
@@ -131,12 +132,12 @@ def initialize_chain():
 
     if 'LANGUAGE' in constants.__dict__:
         text_splitter = RecursiveCharacterTextSplitter.from_language(
-            language=Language[constants.LANGUAGE], 
-            chunk_size=constants.chunk_size, 
+            language=Language[constants.LANGUAGE],
+            chunk_size=constants.chunk_size,
             chunk_overlap=constants.chunk_overlap)
     else:
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=constants.chunk_size, 
+            chunk_size=constants.chunk_size,
             chunk_overlap=constants.chunk_overlap)
 
     splits = text_splitter.split_documents(docs)
@@ -212,7 +213,7 @@ def model() -> make_response:
             return make_response(error_text, 500)
 
         globvars['ModelText'] = this_model
-        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'], 
+        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
         initialize_chain()
         error_text = "Model set to: " + globvars['ModelText']
@@ -228,8 +229,11 @@ def model() -> make_response:
 def temp() -> make_response:
     """ Change LLM temperature """
     try:
-        globvars['Temperature'] = float(request.values['temp'])
-        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'], 
+        temperature = float(request.values['temp'])
+        if temperature < 0.0 or temperature > 2.0:
+            raise HTTPException
+        globvars['Temperature'] = temperature
+        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
         initialize_chain()
         logging.info("Temperature set to %s", str(globvars['Temperature']))
