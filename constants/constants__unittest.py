@@ -1,4 +1,4 @@
-""" Constants file for unit testing """
+""" Constants file for unit testing DO NOT REMOVE!! """
 # Example constants file, to be imported from <your project dir>/constants
 
 # simple string like "mydata"
