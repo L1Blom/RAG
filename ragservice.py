@@ -30,9 +30,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 
 import config
 
-print(f"Arguments count: {len(sys.argv)}")
-for i, arg in enumerate(sys.argv):
-    print(f"Argument {i:>6}: {arg}")
+if len(sys.argv) != 2:
+    print("Error: argument missing -> ID")
+    sys.exit(os.EX_USAGE)
+    
 PROJECT=sys.argv[1]
 constants_import = "constants.constants_"+PROJECT
 

@@ -110,7 +110,7 @@ To run the unit tests, run the program in the project directory using the ID '_u
 It will start a local RAG service accessible at port 8888 (see constants__unittest.py for all defaults).
 
 ```bash
-<your virtual environment/bin/python ragservice.py _unittest
+<your virtual environment>/bin/python ragservice.py _unittest
 Arguments count: 2
 Argument      0: ragservice.py
 Argument      1: _unittest
