@@ -208,6 +208,9 @@ def model() -> make_response:
     """ Change LLM model """
     try:
         this_model = request.values['model']
+        if not this_model.isascii():
+            print(this_model)
+            raise HTTPException
         if not check_model_existence(this_model):
             error_text = "Model "+this_model+" not found in OpenAI's models"
             logging.error(error_text)
@@ -217,7 +220,7 @@ def model() -> make_response:
         globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
         initialize_chain()
-        error_text = "Model set to: " + globvars['ModelText']
+        error_text = "Model set to: " + this_model
         logging.info(error_text)
         return make_response( error_text, 200)
     except HTTPException as e:
@@ -290,7 +293,10 @@ def process_image() -> make_response:
     if globvars['ModelText'] != 'gpt-4o':
         return make_response("Image processing only available in gpt-4o", 500)
     try:
-        image_url = quote(request.values['image'], safe='/:?=&')
+        my_url = request.values['image']
+        if not my_url.isalnum:
+            raise HTTPException
+        image_url = quote(my_url, safe='/:?=&')
         text = request.values['prompt']
         logging.info("Processing image: %s, with prompt: %s", image_url, text)
         bimage = encode_image(image_url)
