@@ -31,35 +31,53 @@ sudo systemctl status rag_MyDocs
 All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
 1. /prompt/\<ID\>/
+
     Parameter: prompt (string)
+
     Your prompt to be send to openAI
 
 2. /prompt/\<ID\>/model
+
     Parameter: model (string)
+
     Your model to be used, like "gpt-4o"
+
     Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
 
 3. /prompt/\<ID\>/temp
+
     Parameter: temp (string, will be cast to float)
+
     Temperature setting, between 0.0 and 2.0
+
     Settings above 1.0 can give significant halicunations and degrades performance too.
+
     Timeout can result in http 408 error (non-fatal)
 
 4. /prompt/\<ID\>/reload
+
     Parameters: none
+
     After adding files to your data directory, use this to reload the vector store
 
 5. /prompt/\<ID\>/clear
+
     Paramters: none
+
     Clears the cache, the in-memory history
 
 6. /prompt/\<ID\>/cache
+
     Paramaters: none
+
     Prints the cache contents to the response object
 
 7. /prompt/\<ID\>/image
+
     Parameters: prompt (string), image (URL to image)
+
     Uploads the image to openAI and use prompt to get the desired contents like: 'What is the mood of the persons?'
+
     Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
 
 ## Usage
@@ -67,9 +85,11 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 ```bash
 # change the model
 curl -X POST --data-urlencode "model=gpt-4o" http://<your server>:<your port>/prompt/<ID>/model
-Model set to: gpt-4o(your virtual env) 
+
+Model set to: gpt-4o
 # prompt to your data
 curl -X POST --data-urlencode "prompt=your question?" http://<your server>:<your port>/prompt/<ID>
+
 Your answer based on the context files provided in data/<ID>
 ```
 
@@ -77,13 +97,15 @@ Your answer based on the context files provided in data/<ID>
 
 ```python
 # simple string like "mydata"
-ID="<your identifier" 
+ID="<your identifier>" 
 # any unused port, will run the Flask server
 PORT=9100
 # Set to True if you want to enable Flask debug
 DEBUG=False
 # Any other level will make it less verbose
 LOGGING_LEVEL="INFO"
+# Where the files reside for unit testing
+HTML="data/_unittest/html"
 # Directory that will be scanned for files to be added to the context
 DATA_DIR="/home/data"
 # All the file extentions you want to be part of the context, see LangChain documentation
@@ -111,9 +133,6 @@ It will start a local RAG service accessible at port 8888 (see constants__unitte
 
 ```bash
 <your virtual environment>/bin/python ragservice.py _unittest
-Arguments count: 2
-Argument      0: ragservice.py
-Argument      1: _unittest
 INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
 INFO:root:Context loaded from 1 documents
 INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
@@ -136,6 +155,8 @@ test_chache_content (__main__.RagServiceMethods.test_chache_content)
 Test to print the contents of the cache ... ok
 test_clear (__main__.RagServiceMethods.test_clear)
 Test to clear the cache ... ok
+test_image (__main__.RagServiceMethods.test_image)
+Test image ... ok
 test_model (__main__.RagServiceMethods.test_model)
 Test model setting, correct or incorrect model according to OpenAI ... ok
 test_prompt (__main__.RagServiceMethods.test_prompt)
@@ -146,7 +167,7 @@ test_temperature (__main__.RagServiceMethods.test_temperature)
 Test to set temparature too high, low, within boundaries 0.0 and 2.0 ... ok
 
 ----------------------------------------------------------------------
-Ran 6 tests in 3.761s
+Ran 7 tests in 5.923s
 
 OK
 ```
@@ -169,3 +190,5 @@ Please make sure to update tests as appropriate.
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
+
+The image used in the unittest is licensed [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) and was found at [Trusted Reviews](https://www.trustedreviews.com/versus/chat-gpt-4-vs-chat-gpt-3-4309130)

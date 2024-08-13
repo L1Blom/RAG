@@ -95,6 +95,7 @@ class RagServiceMethods(unittest.TestCase):
 
     def test_prompt(self):
         """ Test prompt """
+        self.test_clear()
         try:
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             prompt = "prompt=who wrote rag service?"
@@ -106,6 +107,22 @@ class RagServiceMethods(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result,"The RAG Service was developed by L1Blom.")
 
-
+    def test_image(self):
+        """ Test image """
+        self.test_clear()
+        try:
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            data = {
+                "prompt": "what is written?",
+                "image" : api_url+"/file/Open-AI.jpg"
+            }
+            response = requests.post(api_url + '/image', data=data, headers=headers, timeout=10000)
+            status = response.status_code
+            result = response.content.decode("utf-8")
+        except requests.HTTPError as e:
+            print("Error! "+str(e))
+        self.assertEqual(status, 200)
+        self.assertEqual(result, 'The text in the image reads "OpenAI."')
+ 
 if __name__ == '__main__':
     print(unittest.main())

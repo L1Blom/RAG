@@ -10,7 +10,7 @@ import base64
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
-from flask import Flask, make_response, request
+from flask import Flask, make_response, request, send_file
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS, cross_origin
 import openai
@@ -33,11 +33,12 @@ import config
 if len(sys.argv) != 2:
     print("Error: argument missing -> ID")
     sys.exit(os.EX_USAGE)
-    
+
 PROJECT=sys.argv[1]
 constants_import = "constants.constants_"+PROJECT
 
 constants = importlib.import_module(constants_import)
+base_dir = os.path.abspath(os.path.dirname(__file__)) + '/'
 app = Flask(__name__)
 CORS(app)
 
@@ -283,6 +284,11 @@ def cache() -> make_response:
             content += prefix +  ":" + str(message) + "\n"
     return make_response(content, 200)
 
+@app.route("/prompt/files/<file>", methods=["GET"])
+@app.route("/prompt/"+constants.ID+"/file/<file>", methods=["GET"])
+def send_files(file):
+    """ Serve HTML files """
+    return send_file(base_dir + constants.HTML + '/' + file)
 
 @app.route("/prompt/image", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
@@ -293,18 +299,23 @@ def process_image() -> make_response:
     if globvars['ModelText'] != 'gpt-4o':
         return make_response("Image processing only available in gpt-4o", 500)
     try:
-        my_url = request.values['image']
+        logging.info("Using method: %s",request.method)
+        if request.method == 'GET':
+            my_url = request.values['image']
+            text = request.values['prompt']
+        if request.method == 'POST':
+            my_url = request.form['image']
+            text = request.form['prompt']
         if not my_url.isalnum:
             raise HTTPException
         image_url = quote(my_url, safe='/:?=&')
-        text = request.values['prompt']
         logging.info("Processing image: %s, with prompt: %s", image_url, text)
         bimage = encode_image(image_url)
         chain = ChatOpenAI(model=globvars['ModelText'],
                            temperature=globvars['Temperature'])
         msg = chain.invoke(
             [
-                AIMessage(content="Gerco's foto ontdekker"),
+                AIMessage(content="Picture revealer"),
                 HumanMessage(content=[
                     {"type": "text", "text": text},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
