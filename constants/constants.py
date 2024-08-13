@@ -15,7 +15,7 @@ DATA_DIR="/home/data"
 # All the file extentions you want to be part of the context, see LangChain documentation
 DATA_GLOB="*.txt"
 # Where the HTML files reside
-HTML="data/_unittest/html"
+HTML="/home/data/_unittest/html"
 # the lower, the more precise. TODO can be changed dynamically
 TEMPERATURE=0.0
 # Influences the way answers are produced

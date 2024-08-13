@@ -288,7 +288,12 @@ def cache() -> make_response:
 @app.route("/prompt/"+constants.ID+"/file/<file>", methods=["GET"])
 def send_files(file):
     """ Serve HTML files """
-    return send_file(base_dir + constants.HTML + '/' + file)
+    absolute_path = constants.HTML[0:1] == '/'
+    if absolute_path:
+        serve_dir = constants.HTML + '/'
+    else:
+        serve_dir = base_dir + constants.HTML + '/'
+    return send_file(serve_dir + file)
 
 @app.route("/prompt/image", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
