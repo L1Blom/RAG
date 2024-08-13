@@ -289,11 +289,15 @@ def cache() -> make_response:
 def send_files(file):
     """ Serve HTML files """
     absolute_path = constants.HTML[0:1] == '/'
+    
     if absolute_path:
-        serve_dir = constants.HTML + '/'
+
+        serve_file = os.path.normpath(os.path.join(constants.HTML,file))
     else:
-        serve_dir = base_dir + constants.HTML + '/'
-    return send_file(serve_dir + file)
+        serve_file = os.path.normpath(os.path.join(base_dir + constants.HTML,file))
+    if not serve_file.startswith(base_dir):
+        raise HTTPException("Parameter value for HTML not allowed")
+    return send_file(serve_file)
 
 @app.route("/prompt/image", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
