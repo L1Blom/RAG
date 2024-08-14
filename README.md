@@ -175,7 +175,6 @@ OK
 ## TODO's and wishes
 
 - More file formats like PDF
-- Saving the vectorstore
 - Upload files
 - Other API's than OpenAI and other LLM's
 - A simple frontend from the GitHub community

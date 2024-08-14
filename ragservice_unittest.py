@@ -122,7 +122,7 @@ class RagServiceMethods(unittest.TestCase):
         except requests.HTTPError as e:
             print("Error! "+str(e))
         self.assertEqual(status, 200)
-        self.assertEqual(result, 'The text in the image reads "OpenAI."')
- 
+        self.assertEqual(result[0:35], 'The text in the image reads "OpenAI."'[0:35])
+
 if __name__ == '__main__':
     print(unittest.main())

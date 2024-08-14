@@ -7,6 +7,7 @@ import sys
 import uuid
 import importlib
 import base64
+import chromadb
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
@@ -115,6 +116,10 @@ def encode_image(image_url) -> base64:
         image = base64.b64encode(f).decode("utf-8")
     return image
 
+def embedding_function() -> OpenAIEmbeddings:
+    """ Return an Embedding"""
+    return OpenAIEmbeddings()
+
 def initialize_chain():
     """ initialize the chain to access the LLM """
 
@@ -125,25 +130,35 @@ def initialize_chain():
     this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
 
-    loader = DirectoryLoader(constants.DATA_DIR,
-                             glob=constants.DATA_GLOB,
-                             loader_cls=TextLoader,
-                             loader_kwargs=text_loader_kwargs)
-    docs = loader.load()
-    logging.info("Context loaded from %s documents",str(len(docs)))
-
-    if 'LANGUAGE' in constants.__dict__:
-        text_splitter = RecursiveCharacterTextSplitter.from_language(
-            language=Language[constants.LANGUAGE],
-            chunk_size=constants.chunk_size,
-            chunk_overlap=constants.chunk_overlap)
+    
+    if os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
+        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
+        vectorstore = Chroma(client=persistent_client,embedding_function=OpenAIEmbeddings())
     else:
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=constants.chunk_size,
-            chunk_overlap=constants.chunk_overlap)
+        loader = DirectoryLoader(constants.DATA_DIR,
+                                glob=constants.DATA_GLOB,
+                                loader_cls=TextLoader,
+                                loader_kwargs=text_loader_kwargs)
+        docs = loader.load()
+        logging.info("Context loaded from %s documents",str(len(docs)))
 
-    splits = text_splitter.split_documents(docs)
-    vectorstore = Chroma.from_documents(documents=splits, embedding=OpenAIEmbeddings())
+        if 'LANGUAGE' in constants.__dict__:
+            text_splitter = RecursiveCharacterTextSplitter.from_language(
+                language=Language[constants.LANGUAGE],
+                chunk_size=constants.chunk_size,
+                chunk_overlap=constants.chunk_overlap)
+        else:
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=constants.chunk_size,
+                chunk_overlap=constants.chunk_overlap)
+
+        splits = text_splitter.split_documents(docs)
+        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
+        vectorstore = Chroma.from_documents(client=persistent_client,
+                                            documents=splits,
+                                            embedding=OpenAIEmbeddings(),
+                                            persist_directory=constants.PERSISTENCE)
+
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
     ### Contextualize question ###
@@ -289,7 +304,6 @@ def cache() -> make_response:
 def send_files(file):
     """ Serve HTML files """
     absolute_path = constants.HTML[0:1] == '/'
-    
     if absolute_path:
 
         serve_file = os.path.normpath(os.path.join(constants.HTML,file))

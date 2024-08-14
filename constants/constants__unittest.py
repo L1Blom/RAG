@@ -15,6 +15,8 @@ MODELTEXT="gpt-4o"
 DATA_DIR="data/_unittest"
 # All the file extentions you want to be part of the context, see LangChain documentation
 DATA_GLOB="*.txt"
+# Persistence directory for vectorstore
+PERSISTENCE="vectorstore"
 # Where the HTML files reside
 HTML="data/_unittest/html"
 # the lower, the more precise. TODO can be changed dynamically
