@@ -7,10 +7,10 @@ import sys
 import uuid
 import importlib
 import base64
-import chromadb
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
+import chromadb
 from flask import Flask, make_response, request, send_file
 from werkzeug.exceptions import HTTPException
 from flask_cors import CORS, cross_origin
@@ -120,7 +120,7 @@ def embedding_function() -> OpenAIEmbeddings:
     """ Return an Embedding"""
     return OpenAIEmbeddings()
 
-def initialize_chain():
+def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
     if not check_model_existence(globvars['ModelText']):
@@ -130,8 +130,7 @@ def initialize_chain():
     this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
 
-    
-    if os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
+    if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
         persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
         vectorstore = Chroma(client=persistent_client,embedding_function=OpenAIEmbeddings())
     else:
@@ -235,7 +234,7 @@ def model() -> make_response:
         globvars['ModelText'] = this_model
         globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
-        initialize_chain()
+        initialize_chain(True)
         error_text = "Model set to: " + this_model
         logging.info(error_text)
         return make_response( error_text, 200)
@@ -255,13 +254,12 @@ def temp() -> make_response:
         globvars['Temperature'] = temperature
         globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
-        initialize_chain()
+        initialize_chain(True)
         logging.info("Temperature set to %s", str(globvars['Temperature']))
         return make_response("Temperature set to: " + str(globvars['Temperature']) , 200)
     except HTTPException as e:
         logging.error("Error setting temperature %s", str(e))
         return make_response("Error setting temperature", 500)
-
 
 @app.route("/prompt/reload", methods=["GET", "POST"])
 @app.route("/prompt/"+constants.ID+"/reload", methods=["GET", "POST"])
@@ -269,7 +267,7 @@ def temp() -> make_response:
 def reload() -> make_response:
     """ Reload documents to the chain """
     try:
-        initialize_chain()
+        initialize_chain(True)
         return make_response("Text reloaded", 200)
     except HTTPException as e:
         logging.error("Error reloading text: %s" ,str(e))

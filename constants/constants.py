@@ -11,7 +11,7 @@ LOGGING_LEVEL="INFO"
 # The LLM to be used as listed in OpenAI
 MODELTEXT="gpt-4o"
 # Persistence directory for vectorstore
-PERSISTENCE="vectorstore"
+PERSISTENCE="data/_unittest/vectorstore"
 # Directory that will be scanned for files to be added to the context
 DATA_DIR="/home/data"
 # All the file extentions you want to be part of the context, see LangChain documentation
