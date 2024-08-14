@@ -5,10 +5,10 @@ config.py
 constants/constants_[^_]*.py
 count.py
 data/[!_]*
+data/_unittest/vectorstore
 foto.py
 foto.service
 launch.json
 myragenv/
 rag.py
 services/rag_*.service
-vectorstore/*

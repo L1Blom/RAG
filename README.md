@@ -13,8 +13,8 @@ RAG Service is a template service for a retrieval-augmented generator based on t
 3. Choose an ID for your instance, like MyDocs
 4. Copy constants/constants.py to constants_MyDocs.py
 5. Change the contents of this file to reflect your situation
-6. Create a data/ directory and create a MyDocs/ directory in it
-7. Add the files for your RAG context, like text-files
+6. Create a MyDocs/ directory in data/ and in MyDocs/ a directory vectorstore/
+7. Add the files for your RAG context, like text-files, to your MyDocs/ directory
 8. Create a Python virtual environment for your project (optional)
 9. Modify the example services/rag.service_template file to point to the right place of your project directory
 10. Copy the services file to /etc/systed/system/rag_MyDocs.service
