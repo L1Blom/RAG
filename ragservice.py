@@ -7,6 +7,7 @@ import sys
 import uuid
 import importlib
 import base64
+import inspect
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
@@ -35,6 +36,11 @@ if len(sys.argv) != 2:
     print("Error: argument missing -> ID")
     sys.exit(os.EX_USAGE)
 
+# set working dir
+wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
+wd.pop()
+os.chdir('/'.join(map(str,wd)))
+
 PROJECT=sys.argv[1]
 constants_import = "constants.constants_"+PROJECT
 
@@ -57,6 +63,7 @@ def check_model_existence(modelText) -> bool:
 
 # Configureer logging
 logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
+logging.info("Working directory is %s", os.getcwd())
 
 os.environ["OPENAI_API_KEY"] = config.APIKEY
 client     = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY'))
@@ -178,7 +185,7 @@ def initialize_chain(new_vectorstore=False):
                                       glob=constants.DATA_GLOB_PDF)
         splits = loader.load_and_split()
         logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
-        if len(docs)>0:
+        if len(splits)>0:
             vectorstore.add_documents(splits)
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 

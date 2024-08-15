@@ -95,35 +95,16 @@ Your answer based on the context files provided in data/<ID>
 
 ## Constants file
 
+important contstants are:
+
 ```python
 # simple string like "mydata"
 ID="<your identifier>" 
-# any unused port, will run the Flask server
-PORT=9100
-# Set to True if you want to enable Flask debug
-DEBUG=False
-# Any other level will make it less verbose
-LOGGING_LEVEL="INFO"
-# Where the files reside for unit testing
-HTML="data/_unittest/html"
 # Directory that will be scanned for files to be added to the context
 DATA_DIR="/home/data"
 # All the file extentions you want to be part of the context, see LangChain documentation
-DATA_GLOB="*.txt" 
-# The lower, the more precise. Needs to be between 0.0 and 2.0
-TEMPERATURE=0.0 
-# Influences the way answers are produced
-contextualize_q_system_prompt = (
-        "Given a chat history and the latest user question "
-        "which might reference context in the chat history, "
-        "formulate a standalone question which can be understood "
-    )
-# Influences the way answers are produced
-system_prompt = ( # choose your language, English works best
-        "You are a chatbot and gives answer in not more than 3 sentences"
-    )
-chunk_size=1000    # depending on your data, seel LangChain documentation
-chunk_overlap=100  # idem
+DATA_GLOB_TXT="*.txt"
+DATA_GLOB_PDF="*.pdf"
 ```
 
 ## Unit tests
