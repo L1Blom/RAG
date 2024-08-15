@@ -14,7 +14,8 @@ MODELTEXT="gpt-4o"
 # Directory that will be scanned for files to be added to the context
 DATA_DIR="data/_unittest"
 # All the file extentions you want to be part of the context, see LangChain documentation
-DATA_GLOB="*.txt"
+DATA_GLOB_TXT="*.txt"
+DATA_GLOB_PDF="*.pdf"
 # Persistence directory for vectorstore
 PERSISTENCE="data/_unittest/vectorstore"
 # Where the HTML files reside
@@ -32,5 +33,5 @@ contextualize_q_system_prompt = (
 system_prompt = ( # choose your language, English works best
         "You are a chatbot"
     )
-chunk_size=1000    # depending on your data
-chunk_overlap=100  # idem
+chunk_size=80    # depending on your data
+chunk_overlap=10  # idem

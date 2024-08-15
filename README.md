@@ -13,8 +13,8 @@ RAG Service is a template service for a retrieval-augmented generator based on t
 3. Choose an ID for your instance, like MyDocs
 4. Copy constants/constants.py to constants_MyDocs.py
 5. Change the contents of this file to reflect your situation
-6. Create a MyDocs/ directory in data/ and in MyDocs/ a directory vectorstore/
-7. Add the files for your RAG context, like text-files, to your MyDocs/ directory
+6. Create a MyDocs/ directory in data/ and in MyDocs/ a directory vectorstore/ and html/
+7. Add the files for your RAG context, like text and PDF files, to your MyDocs/ directory
 8. Create a Python virtual environment for your project (optional)
 9. Modify the example services/rag.service_template file to point to the right place of your project directory
 10. Copy the services file to /etc/systed/system/rag_MyDocs.service
@@ -159,7 +159,9 @@ test_image (__main__.RagServiceMethods.test_image)
 Test image ... ok
 test_model (__main__.RagServiceMethods.test_model)
 Test model setting, correct or incorrect model according to OpenAI ... ok
-test_prompt (__main__.RagServiceMethods.test_prompt)
+test_prompt_pdf (__main__.RagServiceMethods.test_prompt_pdf)
+Test prompt ... ok
+test_prompt_text (__main__.RagServiceMethods.test_prompt_text)
 Test prompt ... ok
 test_reload (__main__.RagServiceMethods.test_reload)
 Test reload of the data ... ok
@@ -167,14 +169,13 @@ test_temperature (__main__.RagServiceMethods.test_temperature)
 Test to set temparature too high, low, within boundaries 0.0 and 2.0 ... ok
 
 ----------------------------------------------------------------------
-Ran 7 tests in 5.923s
+Ran 8 tests in 9.804s
 
 OK
 ```
 
 ## TODO's and wishes
 
-- More file formats like PDF
 - Upload files
 - Other API's than OpenAI and other LLM's
 - A simple frontend from the GitHub community

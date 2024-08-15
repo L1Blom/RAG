@@ -54,9 +54,9 @@ class RagServiceMethods(unittest.TestCase):
     def test_chache_content(self):
         """ Test to print the contents of the cache """
         self.test_clear()
-        self.test_prompt()
+        self.test_prompt_text()
         answer1 = "User:content='who wrote rag service?'"
-        answer2 = "AI:content='The RAG Service was developed by L1Blom.'"
+        answer2 = "AI:content='RAG Service was developed by L1Blom.'"
         try:
             response = requests.get(api_url+"/cache", timeout=10000)
             status = response.status_code
@@ -93,7 +93,7 @@ class RagServiceMethods(unittest.TestCase):
             print("Error! "+str(e))
         self.assertEqual(status, 200)
 
-    def test_prompt(self):
+    def test_prompt_text(self):
         """ Test prompt """
         self.test_clear()
         try:
@@ -105,7 +105,21 @@ class RagServiceMethods(unittest.TestCase):
         except requests.HTTPError as e:
             print("Error! "+str(e))
         self.assertEqual(status, 200)
-        self.assertEqual(result,"The RAG Service was developed by L1Blom.")
+        self.assertEqual(result,"RAG Service was developed by L1Blom.")
+
+    def test_prompt_pdf(self):
+        """ Test prompt """
+        self.test_clear()
+        try:
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            prompt = "prompt=how many watchers has this GitHub library?"
+            response = requests.post(api_url, data=prompt, headers=headers, timeout=10000)
+            status = response.status_code
+            result = response.content.decode("utf-8")
+        except requests.HTTPError as e:
+            print("Error! "+str(e))
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(result,"The GitHub library has 2 watchers.")
 
     def test_image(self):
         """ Test image """

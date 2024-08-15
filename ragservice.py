@@ -20,7 +20,7 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import DirectoryLoader,TextLoader
+from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
 from langchain_core.pydantic_v1 import BaseModel, Field
@@ -48,6 +48,13 @@ def context_processor():
     """ Store the globals in a Fals way """
     return dict()
 
+def check_model_existence(modelText) -> bool:
+    """ chack if model is present in OpenAI's models """
+    if modelText in modelnames:
+        return True
+    else:
+        return False
+
 # Configureer logging
 logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
 
@@ -60,20 +67,18 @@ for modelitem in models:
 
 globvars = context_processor()
 globvars['ModelText']   = constants.MODELTEXT
+if not check_model_existence(globvars['ModelText']):
+    logging.error("Model %s not found in OpenAI's models",globvars['ModelText'])
+    sys.exit(os.EX_CONFIG)
 globvars['Temperature'] = float(constants.TEMPERATURE)
+if globvars['Temperature'] < 0.0 or globvars["Temperature"] >2.0:
+    logging.error("Temperature not between 0.0 and 2.0: %f",globvars["Temperature"])
+    sys.exit(os.EX_CONFIG)
 globvars['Chain']       = None
 globvars['Store']       = {}
 globvars['Session']     = uuid.uuid4()
 globvars['LLM']         = ChatOpenAI(model=globvars['ModelText'],
                                      temperature=globvars['Temperature'])
-
-
-def check_model_existence(modelText) -> bool:
-    """ chack if model is present in OpenAI's models """
-    if modelText in modelnames:
-        return True
-    else:
-        return False
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -133,13 +138,23 @@ def initialize_chain(new_vectorstore=False):
     if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
         persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
         vectorstore = Chroma(client=persistent_client,embedding_function=OpenAIEmbeddings())
+        logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
+        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
+        vectorstore = Chroma(client=persistent_client,
+                             embedding_function=OpenAIEmbeddings(),
+                             persist_directory=constants.PERSISTENCE)
+        # Delete previous stored documents
+        ids_to_delete = vectorstore.get()['ids']
+        vectorstore.delete(ids=ids_to_delete)
+
+        # Load text files
         loader = DirectoryLoader(constants.DATA_DIR,
-                                glob=constants.DATA_GLOB,
+                                glob=constants.DATA_GLOB_TXT,
                                 loader_cls=TextLoader,
                                 loader_kwargs=text_loader_kwargs)
         docs = loader.load()
-        logging.info("Context loaded from %s documents",str(len(docs)))
+        logging.info("Context loaded from %s text documents...",str(len(docs)))
 
         if 'LANGUAGE' in constants.__dict__:
             text_splitter = RecursiveCharacterTextSplitter.from_language(
@@ -152,11 +167,20 @@ def initialize_chain(new_vectorstore=False):
                 chunk_overlap=constants.chunk_overlap)
 
         splits = text_splitter.split_documents(docs)
-        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
-        vectorstore = Chroma.from_documents(client=persistent_client,
-                                            documents=splits,
-                                            embedding=OpenAIEmbeddings(),
-                                            persist_directory=constants.PERSISTENCE)
+        logging.info("...resulting in %s splits",len(splits))
+        # Create the vectorstore
+
+        if len(splits)>0:
+            vectorstore.add_documents(documents=splits)
+
+        # Load PDF's
+        loader = PyPDFDirectoryLoader(path=constants.DATA_DIR,
+                                      glob=constants.DATA_GLOB_PDF)
+        splits = loader.load_and_split()
+        logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
+        if len(docs)>0:
+            vectorstore.add_documents(splits)
+        logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 

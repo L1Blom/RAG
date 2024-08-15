@@ -15,7 +15,8 @@ PERSISTENCE="data/_unittest/vectorstore"
 # Directory that will be scanned for files to be added to the context
 DATA_DIR="/home/data"
 # All the file extentions you want to be part of the context, see LangChain documentation
-DATA_GLOB="*.txt"
+DATA_GLOB_TXT="*.txt"
+DATA_GLOB_PDF="*.pdf"
 # Where the HTML files reside
 HTML="/home/data/_unittest/html"
 # the lower, the more precise. TODO can be changed dynamically
