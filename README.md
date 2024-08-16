@@ -121,10 +121,10 @@ It will start a local RAG service accessible at port 8888 (see constants__unitte
 
 ```bash
 <your virtual environment>/bin/python ragservice.py _unittest
+INFO:root:Working directory is /home/leen/projects/rag
 INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
-INFO:root:Context loaded from 1 documents
-INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
-INFO:httpx:HTTP Request: POST https://api.openai.com/v1/embeddings "HTTP/1.1 200 OK"
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See https://docs.trychroma.com/telemetry for more information.
+INFO:root:Loaded 6 chunks from persistent vectorstore
 INFO:root:Chain initialized: gpt-4o
  * Serving Flask app 'ragservice'
  * Debug mode: off

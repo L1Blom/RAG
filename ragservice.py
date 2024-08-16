@@ -148,20 +148,20 @@ def initialize_chain(new_vectorstore=False):
 
     if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
         persistent_client = chromadb.PersistentClient(
-            path=constants.PERSISTENCE,
-            settings=chromadb.Settings(allow_reset=True))
+            path=constants.PERSISTENCE)
         vectorstore = Chroma(client=persistent_client,
                              collection_name=collection_name,
                              embedding_function=OpenAIEmbeddings())
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
         persistent_client = chromadb.PersistentClient(
-            path=constants.PERSISTENCE,
-            settings=chromadb.Settings(allow_reset=True))
-        # since we can't detect existence of a collection, we create one before deleting
-        # only needed in a start condition where no persitent store was found
+            path=constants.PERSISTENCE)
+
+        # Since we can't detect existence of a collection, we create one before deleting
+        # Only needed in a start condition where no persitent store was found.
+        # This way all files are deleted compared to .reset which only disconnects.
         persistent_client.get_or_create_collection(name=collection_name)
-        persistent_client.delete_collection(collection_name)
+        persistent_client.delete_collection(name=collection_name)
         vectorstore = Chroma(client=persistent_client,
                              collection_name=collection_name,
                              embedding_function=OpenAIEmbeddings())

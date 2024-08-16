@@ -11,9 +11,7 @@ langchain-community                      0.2.7
 langchain-core                           0.2.18
 langchain-openai                         0.1.16
 langchain-text-splitters                 0.2.2
-markdown-it-py                           3.0.0
 openai                                   1.35.13
-pip                                      23.0.1
 pypdf                                    4.3.1
 requests                                 2.32.3
 urllib3                                  2.2.2
