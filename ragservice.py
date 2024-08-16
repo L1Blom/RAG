@@ -8,12 +8,14 @@ import uuid
 import importlib
 import base64
 import inspect
+from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
 import chromadb
 from flask import Flask, make_response, request, send_file
 from werkzeug.exceptions import HTTPException
+from werkzeug.utils import secure_filename
 from flask_cors import CORS, cross_origin
 import openai
 from langchain.schema.messages import HumanMessage, AIMessage
@@ -29,24 +31,25 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-
 import config
 
 if len(sys.argv) != 2:
     print("Error: argument missing -> ID")
     sys.exit(os.EX_USAGE)
+PROJECT=sys.argv[1]
 
 # set working dir
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
 wd.pop()
 os.chdir('/'.join(map(str,wd)))
 
-PROJECT=sys.argv[1]
 constants_import = "constants.constants_"+PROJECT
-
 constants = importlib.import_module(constants_import)
 base_dir = os.path.abspath(os.path.dirname(__file__)) + '/'
+
+# max 16Mb for uploads
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 CORS(app)
 
 @app.context_processor
@@ -143,17 +146,20 @@ def initialize_chain(new_vectorstore=False):
     text_loader_kwargs={'autodetect_encoding': True}
 
     if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
-        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
-        vectorstore = Chroma(client=persistent_client,embedding_function=OpenAIEmbeddings())
+        persistent_client = chromadb.PersistentClient(
+            path=constants.PERSISTENCE,
+            settings=chromadb.Settings(allow_reset=True))
+        vectorstore = Chroma(client=persistent_client,
+                             embedding_function=OpenAIEmbeddings())
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
-        persistent_client = chromadb.PersistentClient(path=constants.PERSISTENCE)
+        persistent_client = chromadb.PersistentClient(
+            path=constants.PERSISTENCE,
+            settings=chromadb.Settings(allow_reset=True))
+        persistent_client.reset()
         vectorstore = Chroma(client=persistent_client,
-                             embedding_function=OpenAIEmbeddings(),
-                             persist_directory=constants.PERSISTENCE)
+                             embedding_function=OpenAIEmbeddings())
         # Delete previous stored documents
-        ids_to_delete = vectorstore.get()['ids']
-        vectorstore.delete(ids=ids_to_delete)
 
         # Load text files
         loader = DirectoryLoader(constants.DATA_DIR,
@@ -334,7 +340,6 @@ def send_files(file):
     """ Serve HTML files """
     absolute_path = constants.HTML[0:1] == '/'
     if absolute_path:
-
         serve_file = os.path.normpath(os.path.join(constants.HTML,file))
     else:
         serve_file = os.path.normpath(os.path.join(base_dir + constants.HTML,file))
@@ -378,6 +383,46 @@ def process_image() -> make_response:
     except HTTPException as e:
         logging.error("Error processing image: %s", str(e))
         return make_response("Error processing image", 500)
+
+@app.route("/prompt/upload", methods=["POST"])
+@app.route("/prompt/"+constants.ID+"/upload", methods=["POST"])
+@cross_origin()
+def upload_file():
+    """ Handles the file upload """
+    if 'filename' not in request.files:
+        logging.error("Error in upload data")
+        return make_response("Error in upload data", 500)
+
+    file = request.files['filename']
+    if file.filename == '':
+        logging.error('No file selected for uploading')
+        return make_response("Error in upload data, no filename found", 500)
+
+    filename = secure_filename(file.filename)
+
+    # module not iterable, so repeating code unfortunately
+    found = False
+    if PurePath(filename).match(constants.DATA_GLOB_TXT):
+        found = True
+    if PurePath(filename).match(constants.DATA_GLOB_PDF):
+        found = True
+
+    if not found:
+        logging.info("File to upload has extension that doesn't match GLOB_ coonstants")
+        return make_response("File to upload has extension that doesn't match GLOB_ constants", 500)
+
+    filepath = os.path.join(constants.DATA_DIR,filename)
+
+    try:
+        logging.info("Saving %s on: %s",filename,filepath)
+        file.save(filepath)
+        logging.info("File %s saved on: %s",filename,filepath)
+        initialize_chain(True)
+    except HTTPException as e:
+        logging.error("Image processing failed: %s",str(e))
+        return make_response("Error in upload data, no filename found", 500)
+
+    return make_response("Upload completed", 200)
 
 if __name__ == '__main__':
     if initialize_chain():

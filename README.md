@@ -80,6 +80,13 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
 
+8. /prompt/\<ID\>/upload
+
+    Parameters: file (string) (maximum size 16 Mb)
+
+    Uploads the file to the directory DATA_DIR, only if the extension is listed in DATA_GLOB_*
+    If not, results in http 500 error (non-fatal)
+
 ## Usage
 
 ```bash
@@ -157,7 +164,6 @@ OK
 
 ## TODO's and wishes
 
-- Upload files
 - Other API's than OpenAI and other LLM's
 - A simple frontend from the GitHub community
 
