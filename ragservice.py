@@ -144,20 +144,26 @@ def initialize_chain(new_vectorstore=False):
 
     this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
+    collection_name="vectorstore"
 
     if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
         persistent_client = chromadb.PersistentClient(
             path=constants.PERSISTENCE,
             settings=chromadb.Settings(allow_reset=True))
         vectorstore = Chroma(client=persistent_client,
+                             collection_name=collection_name,
                              embedding_function=OpenAIEmbeddings())
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
         persistent_client = chromadb.PersistentClient(
             path=constants.PERSISTENCE,
             settings=chromadb.Settings(allow_reset=True))
-        persistent_client.reset()
+        # since we can't detect existence of a collection, we create one before deleting
+        # only needed in a start condition where no persitent store was found
+        persistent_client.get_or_create_collection(name=collection_name)
+        persistent_client.delete_collection(collection_name)
         vectorstore = Chroma(client=persistent_client,
+                             collection_name=collection_name,
                              embedding_function=OpenAIEmbeddings())
         # Delete previous stored documents
 
