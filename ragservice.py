@@ -8,6 +8,7 @@ import uuid
 import importlib
 import base64
 import inspect
+import configparser
 from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
@@ -30,65 +31,92 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.llms.ollama import Ollama
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+from langchain_groq import ChatGroq, chat_models
+from groq import Groq
 import config
 
+# The program needs a ID to be able to read the config
+# Use _unittest for activating unittests or your own tests
 if len(sys.argv) != 2:
     print("Error: argument missing -> ID")
     sys.exit(os.EX_USAGE)
-PROJECT=sys.argv[1]
+rag_project=sys.argv[1]
 
-# set working dir
+# set working dir to program dir to allow relative paths in configs
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
 wd.pop()
 os.chdir('/'.join(map(str,wd)))
 
-constants_import = "constants.constants_"+PROJECT
-constants = importlib.import_module(constants_import)
 base_dir = os.path.abspath(os.path.dirname(__file__)) + '/'
+
+# Read the constants from a config file
+rc = configparser.ConfigParser()
+rc.read(base_dir + "constants/constants_"+rag_project+".ini")
 
 # max 16Mb for uploads
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+maxmb = rc.getint('FLASK','max_mb_size')
+app.config['MAX_CONTENT_LENGTH'] = maxmb * 1024 * 1024
 CORS(app)
 
 @app.context_processor
 def context_processor():
-    """ Store the globals in a Fals way """
+    """ Store the globals in a Flask way """
     return dict()
 
-def check_model_existence(modelText) -> bool:
-    """ chack if model is present in OpenAI's models """
-    if modelText in modelnames:
-        return True
+def get_modelnames(mode, modeltext):
+    """ 
+        Load all API keys to environment vairiables.
+        Return possible modelnames and check the chosen one.
+    """
+    for llm in rc.get('LLMS','llms').split(','):
+        option = llm+"_APIKEY"
+        if option in config.apikeys:
+            key = config.apikeys[option]
+            env = llm+"_API_KEY"
+            os.environ[env] = key
+
+    if mode == 'OPENAI':
+        client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
+    if mode == 'GROQ':
+        client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
+
+    if client != None:
+        models = client.models.list().data
+        names = [str(dict(modelitem)['id']) for modelitem in models]
+        if not modeltext in names:
+            logging.error("Model %s not found in %s models",modeltext, mode)
+            sys.exit(os.EX_CONFIG)
     else:
-        return False
+        names = []
+    return names
 
 # Configureer logging
-logging.basicConfig(level=logging.getLevelName(constants.LOGGING_LEVEL))
+logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
 logging.info("Working directory is %s", os.getcwd())
 
-os.environ["OPENAI_API_KEY"] = config.APIKEY
-client     = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY'))
-models     = client.models.list().to_dict()['data']
-modelnames = []
-for modelitem in models:
-    modelnames.append(modelitem['id'])
-
 globvars = context_processor()
-globvars['ModelText']   = constants.MODELTEXT
-if not check_model_existence(globvars['ModelText']):
-    logging.error("Model %s not found in OpenAI's models",globvars['ModelText'])
+rcllms   = globvars['USE_LLM']     = rc.get('LLMS','use_llm')
+rcmodel  = globvars['ModelText']   = rc.get('LLMS.'+rcllms,'modeltext')
+rctemp   = globvars['Temperature'] = rc.getfloat('DEFAULT','temperature')
+if rctemp < 0.0 or rctemp > 2.0:
+    logging.error("Temperature not between 0.0 and 2.0: %f", rctemp)
     sys.exit(os.EX_CONFIG)
-globvars['Temperature'] = float(constants.TEMPERATURE)
-if globvars['Temperature'] < 0.0 or globvars["Temperature"] >2.0:
-    logging.error("Temperature not between 0.0 and 2.0: %f",globvars["Temperature"])
-    sys.exit(os.EX_CONFIG)
-globvars['Chain']       = None
-globvars['Store']       = {}
-globvars['Session']     = uuid.uuid4()
-globvars['LLM']         = ChatOpenAI(model=globvars['ModelText'],
-                                     temperature=globvars['Temperature'])
+globvars['Chain']   = None
+globvars['Store']   = {}
+globvars['Session'] = uuid.uuid4()
+modelnames = get_modelnames(rcllms, rcmodel)
+
+if globvars['USE_LLM'] == "OPENAI":
+    globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
+if globvars['USE_LLM'] == "OLLAMA":
+    globvars['LLM']     = Ollama(model=rcmodel)
+if globvars['USE_LLM'] == "GROQ":
+    #globvars['LLM']     = ChatGroq(api_key=os.environ.get("GROQ_API_KEY"))
+    globvars['LLM']     = ChatGroq(model=rcmodel)
+                               
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -138,24 +166,20 @@ def embedding_function() -> OpenAIEmbeddings:
 def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
-    if not check_model_existence(globvars['ModelText']):
-        logging.error("Model %s not found in OpenAI's models",globvars['ModelText'])
-        return False
-
     this_model = globvars['LLM']
     text_loader_kwargs={'autodetect_encoding': True}
     collection_name="vectorstore"
 
-    if not new_vectorstore and os.path.exists(constants.PERSISTENCE+'/chroma.sqlite3'):
+    if not new_vectorstore and os.path.exists(rc.get('DEFAULT','persistence')+'/chroma.sqlite3'):
         persistent_client = chromadb.PersistentClient(
-            path=constants.PERSISTENCE)
+            path=rc.get('DEFAULT','persistence'))
         vectorstore = Chroma(client=persistent_client,
                              collection_name=collection_name,
                              embedding_function=OpenAIEmbeddings())
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
         persistent_client = chromadb.PersistentClient(
-            path=constants.PERSISTENCE)
+            path=rc.get('DEFAULT','persistence'))
 
         # Since we can't detect existence of a collection, we create one before deleting
         # Only needed in a start condition where no persitent store was found.
@@ -168,22 +192,22 @@ def initialize_chain(new_vectorstore=False):
         # Delete previous stored documents
 
         # Load text files
-        loader = DirectoryLoader(constants.DATA_DIR,
-                                glob=constants.DATA_GLOB_TXT,
-                                loader_cls=TextLoader,
-                                loader_kwargs=text_loader_kwargs)
+        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                                 glob=rc.get('DEFAULT','data_glob_txt'),
+                                 loader_cls=TextLoader,
+                                 loader_kwargs=text_loader_kwargs)
         docs = loader.load()
         logging.info("Context loaded from %s text documents...",str(len(docs)))
 
-        if 'LANGUAGE' in constants.__dict__:
+        if rc.has_option('DEFAULT','LANGUAGE'):
             text_splitter = RecursiveCharacterTextSplitter.from_language(
-                language=Language[constants.LANGUAGE],
-                chunk_size=constants.chunk_size,
-                chunk_overlap=constants.chunk_overlap)
+                language=Language[rc.get('DEFAULT','language')],
+                chunk_size=rc.get('DEFAULT','chunk_size'),
+                chunk_overlap=rc.get('DEFAULT','chunk_overlap'))
         else:
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=constants.chunk_size,
-                chunk_overlap=constants.chunk_overlap)
+                chunk_size=rc.get('DEFAULT','chunk_size'),
+                chunk_overlap=rc.get('DEFAULT','chunk_overlap'))
 
         splits = text_splitter.split_documents(docs)
         logging.info("...resulting in %s splits",len(splits))
@@ -193,8 +217,8 @@ def initialize_chain(new_vectorstore=False):
             vectorstore.add_documents(documents=splits)
 
         # Load PDF's
-        loader = PyPDFDirectoryLoader(path=constants.DATA_DIR,
-                                      glob=constants.DATA_GLOB_PDF)
+        loader = PyPDFDirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                                      glob=rc.get('DEFAULT','data_glob_txt'))
         splits = loader.load_and_split()
         logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
         if len(splits)>0:
@@ -204,7 +228,7 @@ def initialize_chain(new_vectorstore=False):
     retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
 
     ### Contextualize question ###
-    contextualize_q_system_prompt = constants.contextualize_q_system_prompt
+    contextualize_q_system_prompt = rc.get('DEFAULT','contextualize_q_system_prompt')
     contextualize_q_prompt = ChatPromptTemplate.from_messages(
         [
             ("system", contextualize_q_system_prompt),
@@ -217,7 +241,7 @@ def initialize_chain(new_vectorstore=False):
     )
 
     ### Answer question ###
-    system_prompt = constants.system_prompt + (
+    system_prompt = rc.get('DEFAULT','system_prompt') + (
         "{context}"
     )
     qa_prompt = ChatPromptTemplate.from_messages(
@@ -241,13 +265,18 @@ def initialize_chain(new_vectorstore=False):
     logging.info("Chain initialized: %s",globvars['ModelText'])
     return True
 
+app_path = "/prompt/"+rc.get('DEFAULT','id')
+
 @app.route("/prompt", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID, methods=["GET", "POST"])
+@app.route(app_path, methods=["GET", "POST"])
 @cross_origin()
 def process() -> make_response:
     """ The prompt processor """
     try:
-        query = request.values['prompt']
+        if request.method == 'GET':
+            query = request.values['prompt']
+        if request.method == 'POST':
+            query = request.form['prompt']
         logging.info("Query: %s", query)
         result = globvars['Chain'].invoke(
             {"input": query},
@@ -260,7 +289,7 @@ def process() -> make_response:
         return make_response("Error processing prompt", 500)
 
 @app.route("/prompt/model", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/model", methods=["GET", "POST"])
+@app.route(app_path+"/model", methods=["GET", "POST"])
 @cross_origin()
 def model() -> make_response:
     """ Change LLM model """
@@ -269,7 +298,7 @@ def model() -> make_response:
         if not this_model.isascii():
             print(this_model)
             raise HTTPException
-        if not check_model_existence(this_model):
+        if not this_model in modelnames:
             error_text = "Model "+this_model+" not found in OpenAI's models"
             logging.error(error_text)
             return make_response(error_text, 500)
@@ -286,7 +315,7 @@ def model() -> make_response:
         return make_response("Error setting model", 500)
 
 @app.route("/prompt/temp", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/temp", methods=["GET", "POST"])
+@app.route(app_path+"/temp", methods=["GET", "POST"])
 @cross_origin()
 def temp() -> make_response:
     """ Change LLM temperature """
@@ -305,7 +334,7 @@ def temp() -> make_response:
         return make_response("Error setting temperature", 500)
 
 @app.route("/prompt/reload", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/reload", methods=["GET", "POST"])
+@app.route(app_path+"/reload", methods=["GET", "POST"])
 @cross_origin()
 def reload() -> make_response:
     """ Reload documents to the chain """
@@ -316,9 +345,8 @@ def reload() -> make_response:
         logging.error("Error reloading text: %s" ,str(e))
         return make_response("Error reloading text", 500)
 
-
 @app.route("/prompt/clear", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/clear", methods=["GET", "POST"])
+@app.route(app_path+"/clear", methods=["GET", "POST"])
 @cross_origin()
 def clear() -> make_response:
     """ Clear the cache """
@@ -326,7 +354,7 @@ def clear() -> make_response:
     return make_response("History deleted", 200)
 
 @app.route("/prompt/cache", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/cache", methods=["GET", "POST"])
+@app.route(app_path+"/cache", methods=["GET", "POST"])
 @cross_origin()
 def cache() -> make_response:
     """ Return cache contents """
@@ -341,20 +369,21 @@ def cache() -> make_response:
     return make_response(content, 200)
 
 @app.route("/prompt/files/<file>", methods=["GET"])
-@app.route("/prompt/"+constants.ID+"/file/<file>", methods=["GET"])
+@app.route(app_path+"/file/<file>", methods=["GET"])
 def send_files(file):
     """ Serve HTML files """
-    absolute_path = constants.HTML[0:1] == '/'
+    html_dir = rc.get('DEFAULT','html')
+    absolute_path = html_dir[0:1] == '/'
     if absolute_path:
-        serve_file = os.path.normpath(os.path.join(constants.HTML,file))
+        serve_file = os.path.normpath(os.path.join(html_dir,file))
     else:
-        serve_file = os.path.normpath(os.path.join(base_dir + constants.HTML,file))
+        serve_file = os.path.normpath(os.path.join(base_dir + html_dir,file))
     if not serve_file.startswith(base_dir):
         raise HTTPException("Parameter value for HTML not allowed")
     return send_file(serve_file)
 
 @app.route("/prompt/image", methods=["GET", "POST"])
-@app.route("/prompt/"+constants.ID+"/image", methods=["GET", "POST"])
+@app.route(app_path+"/image", methods=["GET", "POST"])
 @cross_origin()
 def process_image() -> make_response:
     """ Send image to ChatGPT and send prompt to analyse contents """
@@ -391,7 +420,7 @@ def process_image() -> make_response:
         return make_response("Error processing image", 500)
 
 @app.route("/prompt/upload", methods=["POST"])
-@app.route("/prompt/"+constants.ID+"/upload", methods=["POST"])
+@app.route(app_path+"/upload", methods=["POST"])
 @cross_origin()
 def upload_file():
     """ Handles the file upload """
@@ -408,16 +437,16 @@ def upload_file():
 
     # module not iterable, so repeating code unfortunately
     found = False
-    if PurePath(filename).match(constants.DATA_GLOB_TXT):
+    if PurePath(filename).match(rc.get('DEFAULT','data_glob_txt')):
         found = True
-    if PurePath(filename).match(constants.DATA_GLOB_PDF):
+    if PurePath(filename).match(rc.get('DEFAULT','data_glob_pdf')):
         found = True
 
     if not found:
         logging.info("File to upload has extension that doesn't match GLOB_ coonstants")
         return make_response("File to upload has extension that doesn't match GLOB_ constants", 500)
 
-    filepath = os.path.join(constants.DATA_DIR,filename)
+    filepath = os.path.join(rc.get('DEFAULT','data_dir'),filename)
 
     try:
         logging.info("Saving %s on: %s",filename,filepath)
@@ -430,8 +459,13 @@ def upload_file():
 
     return make_response("Upload completed", 200)
 
+@app.teardown_request
+def log_unhandled(e):
+    if e is not None:
+        print(repr(e))
+        
 if __name__ == '__main__':
     if initialize_chain():
-        app.run(port=constants.PORT, debug=constants.DEBUG, host="0.0.0.0")
+        app.run(port=rc.get('FLASK','port'), debug=rc.getboolean('FLASK','debug'), host="0.0.0.0")
     else:
         logging.error("Initialization of chain failed")
