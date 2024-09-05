@@ -327,15 +327,17 @@ def prompt(values):
 
 create_call('', prompt, ["GET", "POST"], ['prompt'])
 
+def log_error(error_text):
+    logging.error(error_text)
+    raise HTTPException(error_text)
+
 def model(values):
     """ Set the LLM model """
     this_model = values[0]
     if not this_model.isascii():
-        print(this_model)
+        log_error("Modelname "+this_model+" uses non-ascii characters")
     if not this_model in modelnames:
-        error_text = "Model "+this_model+" not found in OpenAI's models"
-        logging.error(error_text)
-        raise HTTPException
+        log_error("Model "+this_model+" not found in OpenAI's models")
     globvars['ModelText'] = this_model
     globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                             temperature=globvars['Temperature'])
@@ -348,9 +350,7 @@ def temp(values):
     """ Set temperature """
     temperature = float(values[0])
     if temperature < 0.0 or temperature > 2.0:
-        error_text = "Temperature "+str(temperature)+" not between 0.0 and 2.0"
-        logging.error(error_text)
-        raise HTTPException(error_text)
+        log_error("Temperature "+str(temperature)+" not between 0.0 and 2.0")
     globvars['Temperature'] = temperature
     globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
                         temperature=globvars['Temperature'])
@@ -397,7 +397,7 @@ def send_files(values):
     else:
         serve_file = os.path.normpath(os.path.join(base_dir + html_dir,file))
     if not serve_file.startswith(base_dir):
-        raise HTTPException("Parameter value for HTML not allowed")
+        log_error("Parameter value for HTML not allowed")
     return send_file(serve_file)
 
 create_call('files', send_files, ["GET"], ['file'], False)
@@ -408,9 +408,9 @@ def process_image(values):
     my_url = values[0]
     text   = values[1]
     if not my_url.isalnum:
-        raise HTTPException("URL is not well-formed")
+        log_error("URL is not well-formed")
     if globvars['ModelText'] != 'gpt-4o':
-        raise HTTPException("Image processing only available in gpt-4o")
+        log_error("Image processing only available in gpt-4o")
 
     image_url = quote(my_url, safe='/:?=&')
     logging.info("Processing image: %s, with prompt: %s", image_url, text)
@@ -435,9 +435,7 @@ def upload_file(values):
 
     file = values['file']
     if file.filename == '':
-        error_text = "Error in upload data, no filename found"
-        logging.error(error_text)
-        raise HTTPException(error_text)
+        log_error("Error in upload data, no filename found")
 
     filename = secure_filename(file.filename)
 
@@ -449,9 +447,7 @@ def upload_file(values):
         found = True
 
     if not found:
-        error_text = "File to upload has extension that doesn't match GLOB_* constants"
-        logging.error(error_text)
-        raise HTTPException(error_text)
+        log_error("File to upload has extension that doesn't match GLOB_* constants")
 
     filepath = os.path.join(rc.get('DEFAULT','data_dir'),filename)
 
