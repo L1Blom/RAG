@@ -1,14 +1,29 @@
 #!/usr/bin/bash
-while getopts "use" option
+# for help use option -h
+
+while getopts "useh" option
 do 
-    case "${option}"
-        in
+    case "${option}" in
         u)do_update=1;;
         s)do_stop=1;;
         e)do_enable=1;;
+        h)do_help=1;;
     esac
 
 done
+
+if [ "$do_help" = 1 ]; then
+    echo 'Run this script from the directory with the source service files (*.service)'
+    echo ' Options are:'
+    echo ' -u -> this will cp and overwrite the service files to /etc/systemd/system and reload daemon'
+    echo ' -s -> `systemctl stop` for any service found with the name of the service files without extension'
+    echo ' -e -> `systemctl enable and start` for any service found with the name of the service files without extension'
+    echo ' -h -> show this message'
+    echo 'Combinations are possible, -h will exit without perform any actions.'
+    echo 'if no option is given, it will perform update -> stop -> enable -> start in this sequence.'
+    echo ''
+    exit
+fi
 
 if [ "$do_update$do_stop$do_enable" = "" ]; then
     echo "No options given, executing 'update', 'stop' and 'enable and start'"

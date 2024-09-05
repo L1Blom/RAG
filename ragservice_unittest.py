@@ -1,37 +1,71 @@
 """ Service constants for unit testing """
+import os
+import inspect
+import configparser
 import unittest
 import urllib.parse
 import requests
 import requests.exceptions
 import requests.utils
-import constants.constants__unittest as constants
+import unittest.test
 
 
-ID = constants.ID
+wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
+wd.pop()
+os.chdir('/'.join(map(str,wd)))
+
+base_dir = os.path.abspath(os.path.dirname(__file__)) + '/'
+
+# Read the constants from a config file
+rc = configparser.ConfigParser()
+rc.read(base_dir + "constants/constants__unittest.ini")
+ID   = rc.get('DEFAULT','id')
+port = rc.get('FLASK','port')
 api_url = urllib.parse.quote("http://localhost:"+
-                             str(constants.PORT)+
+                             str(port)+
                              "/prompt/"+ID, 
                              safe=':?/')
+
+tests = {'OPENAI':
+    {
+        'Model-ok'              : ['test_model','gpt-4o',200],
+        'Model-bad'             : ['test_model','failing-llm',500],
+        'Reload'                : ['test_reload','',200],
+        'Clear'                 : ['test_clear','',200],
+        'Cache'                 : ['test_cache',{
+            'answer1' :"User:content='who wrote rag service?'",
+            'answer2'           :"AI:content='RAG Service was developed by L1Blom.'"
+        }, 200],
+        'Temperature-ok'        : ['test_temperature',0.0,200],
+        'Temperature-too-low'   : ['test_temperature',-0.6,500],
+        'Temperature-too-high'  : ['test_temperature',2.1,500],
+        'Prompt-text'           : ['test_prompt_text',{
+            'prompt' : "prompt=who wrote rag service?",
+            'answer' : "RAG Service was developed by L1Blom."
+        }, 200],
+        'Prompt-PDF'            : ['test_prompt_pdf',{
+            'prompt' : "prompt=how many watchers has this GitHub library?",
+            'answer' : "The GitHub repository for the RAG Service has 2 watchers."
+        }, 200],
+    }
+}
 
 class RagServiceMethods(unittest.TestCase):
     """ RAG tests """
     def test_model(self):
-        """ Test model setting, correct or incorrect model according to OpenAI """
-        model = constants.MODELTEXT
-        try:
-            response = requests.get(api_url+"/model?model="+model, timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
-        # Test model setting, wrong model according to OpenAI
-        model = "failing-llm"
-        try:
-            response = requests.get(api_url+"/model?model="+model, timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 500)
+        """ Test model setting, correct or incorrect model according to LLM """
+        for llm in tests.keys():
+            for options in ['Model-ok','Model-bad']:
+                option = tests[llm][options]
+                with self.subTest(llm, option=option):
+                    model       = option[1]
+                    result_code = option[2]
+                    try:
+                        response = requests.get(api_url+"/model?model="+model, timeout=10000)
+                        status = response.status_code
+                    except requests.HTTPError as e:
+                        print("Error! "+str(e))
+                    self.assertEqual(status, result_code)
 
     def test_reload(self):
         """ Test reload of the data """
@@ -51,7 +85,7 @@ class RagServiceMethods(unittest.TestCase):
             print("Error! "+str(e))
         self.assertEqual(status, 200)
 
-    def test_chache_content(self):
+    def test_chache(self):
         """ Test to print the contents of the cache """
         self.test_clear()
         self.test_prompt_text()
@@ -86,7 +120,7 @@ class RagServiceMethods(unittest.TestCase):
         self.assertEqual(status, 500)
 
         try:
-            temp=str(constants.TEMPERATURE)
+            temp=str(rc.get('DEFAULT','temperature'))
             response = requests.get(api_url+"/temp?temp="+temp, timeout=10000)
             status = response.status_code
         except requests.HTTPError as e:
@@ -119,7 +153,7 @@ class RagServiceMethods(unittest.TestCase):
         except requests.HTTPError as e:
             print("Error! "+str(e))
         self.assertEqual(status, 200)
-        self.assertAlmostEqual(result,"The GitHub library has 2 watchers.")
+        self.assertEqual(result,"The GitHub library has 2 watchers.")
 
     def test_image(self):
         """ Test image """
@@ -140,3 +174,4 @@ class RagServiceMethods(unittest.TestCase):
 
 if __name__ == '__main__':
     print(unittest.main())
+

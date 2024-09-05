@@ -2,7 +2,7 @@ __pycache__
 .vscode
 afk.py
 config.py
-constants/constants_[^_]*.py
+constants/constants_[^_]*.ini
 count.py
 data/[!_]*
 data/_unittest/vectorstore

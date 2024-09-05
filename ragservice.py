@@ -9,6 +9,7 @@ import importlib
 import base64
 import inspect
 import configparser
+import subprocess
 from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
@@ -71,6 +72,8 @@ def get_modelnames(mode, modeltext):
         Load all API keys to environment vairiables.
         Return possible modelnames and check the chosen one.
     """
+    names = []
+    
     for llm in rc.get('LLMS','llms').split(','):
         option = llm+"_APIKEY"
         if option in config.apikeys:
@@ -82,15 +85,24 @@ def get_modelnames(mode, modeltext):
         client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
     if mode == 'GROQ':
         client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
+    if mode == 'OLLAMA':
+        client = None
+        result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE).stdout.decode('utf-8')
+        namelist = result.strip().split()
+        for name in namelist:
+            hit = name.find(':latest')
+            if hit>0:
+                model = name[0:hit]
+                names.append(model)            
 
-    if client != None:
+    if client != None: # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
         names = [str(dict(modelitem)['id']) for modelitem in models]
-        if not modeltext in names:
-            logging.error("Model %s not found in %s models",modeltext, mode)
-            sys.exit(os.EX_CONFIG)
-    else:
-        names = []
+
+    if not modeltext in names:
+        logging.error("Model %s not found in %s models",modeltext, mode)
+        sys.exit(os.EX_CONFIG)
+
     return names
 
 # Configureer logging
@@ -109,14 +121,18 @@ globvars['Store']   = {}
 globvars['Session'] = uuid.uuid4()
 modelnames = get_modelnames(rcllms, rcmodel)
 
+
 if globvars['USE_LLM'] == "OPENAI":
     globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
 if globvars['USE_LLM'] == "OLLAMA":
     globvars['LLM']     = Ollama(model=rcmodel)
 if globvars['USE_LLM'] == "GROQ":
-    #globvars['LLM']     = ChatGroq(api_key=os.environ.get("GROQ_API_KEY"))
     globvars['LLM']     = ChatGroq(model=rcmodel)
-                               
+
+
+if rcmodel not in modelnames:
+    print(f"Error: modelname {rcmodel} not known with {rcllms}")
+    sys.exit(os.EX_CONFIG)
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -202,12 +218,12 @@ def initialize_chain(new_vectorstore=False):
         if rc.has_option('DEFAULT','LANGUAGE'):
             text_splitter = RecursiveCharacterTextSplitter.from_language(
                 language=Language[rc.get('DEFAULT','language')],
-                chunk_size=rc.get('DEFAULT','chunk_size'),
-                chunk_overlap=rc.get('DEFAULT','chunk_overlap'))
+                chunk_size=rc.getint('DEFAULT','chunk_size'),
+                chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
         else:
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=rc.get('DEFAULT','chunk_size'),
-                chunk_overlap=rc.get('DEFAULT','chunk_overlap'))
+                chunk_size=rc.getint('DEFAULT','chunk_size'),
+                chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
 
         splits = text_splitter.split_documents(docs)
         logging.info("...resulting in %s splits",len(splits))
@@ -218,7 +234,7 @@ def initialize_chain(new_vectorstore=False):
 
         # Load PDF's
         loader = PyPDFDirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                      glob=rc.get('DEFAULT','data_glob_txt'))
+                                      glob=rc.get('DEFAULT','data_glob_pdf'))
         splits = loader.load_and_split()
         logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
         if len(splits)>0:
@@ -265,98 +281,99 @@ def initialize_chain(new_vectorstore=False):
     logging.info("Chain initialized: %s",globvars['ModelText'])
     return True
 
-app_path = "/prompt/"+rc.get('DEFAULT','id')
+def create_call(name, function, methods, params=[], response_output=True):
+    """ Create Flask route """
+    app_path = "/prompt/"+rc.get('DEFAULT','id')
+    #@app.route(app_path+name, methods=methods)
+    @cross_origin()
+    def _function():
+        if len(request.files) > 0:
+            values = request.files
+        else:
+            values = []
+            for param in params:
+                    if request.method == 'GET':
+                        values.append(request.values[param])
+                        logging.info("%s: %s", param, values[:-1])
+                    if request.method == 'POST':
+                        values.append(request.form[param])
+                        logging.info("%s: %s", param, values[:-1])
+        try: 
+            result = function(values)
+            if response_output:
+                logging.info("Result %s: %s",name, result['answer'])
+                return make_response(result['answer'], 200)
+            else:
+                logging.info("Processing %s succeded",name)
+                return result
+        except HTTPException as e:
+            logging.error("Error processing %s: %s",name, str(e))
+            return make_response(f"Error processing {name}", 500)
+    _function.__name__ = 'p'+name
+    if name == '':
+        my_path = app_path
+    else:
+        my_path = '/'.join([app_path,name])
+    logging.info("path -> "+my_path+" "+','.join(params))
+    app.add_url_rule(my_path, name, _function, methods=methods)
 
-@app.route("/prompt", methods=["GET", "POST"])
-@app.route(app_path, methods=["GET", "POST"])
-@cross_origin()
-def process() -> make_response:
-    """ The prompt processor """
-    try:
-        if request.method == 'GET':
-            query = request.values['prompt']
-        if request.method == 'POST':
-            query = request.form['prompt']
-        logging.info("Query: %s", query)
-        result = globvars['Chain'].invoke(
-            {"input": query},
+def prompt(values):
+    """ Answer the prompt """
+    prompt = values[0]
+    return globvars['Chain'].invoke(
+            {"input": prompt},
             config={"configurable": {"session_id": globvars['Session']}},
         )
-        logging.info("Result: %s",result['answer'])
-        return make_response(result['answer'], 200)
-    except HTTPException as e:
-        logging.error("Error processing prompt: %s",str(e))
-        return make_response("Error processing prompt", 500)
 
-@app.route("/prompt/model", methods=["GET", "POST"])
-@app.route(app_path+"/model", methods=["GET", "POST"])
-@cross_origin()
-def model() -> make_response:
-    """ Change LLM model """
-    try:
-        this_model = request.values['model']
-        if not this_model.isascii():
-            print(this_model)
-            raise HTTPException
-        if not this_model in modelnames:
-            error_text = "Model "+this_model+" not found in OpenAI's models"
-            logging.error(error_text)
-            return make_response(error_text, 500)
+create_call('', prompt, ["GET", "POST"], ['prompt'])
 
-        globvars['ModelText'] = this_model
-        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
-                                     temperature=globvars['Temperature'])
-        initialize_chain(True)
-        error_text = "Model set to: " + this_model
-        logging.info(error_text)
-        return make_response( error_text, 200)
-    except HTTPException as e:
-        logging.error("Error setting model: %s", str(e))
-        return make_response("Error setting model", 500)
+def model(values):
+    """ Set the LLM model """
+    this_model = values[0]
+    if not this_model.isascii():
+        print(this_model)
+    if not this_model in modelnames:
+        error_text = "Model "+this_model+" not found in OpenAI's models"
+        logging.error(error_text)
+        raise HTTPException
+    globvars['ModelText'] = this_model
+    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
+                            temperature=globvars['Temperature'])
+    initialize_chain(True)
+    return {'answer':'Model set to '+this_model}
+    
+create_call('model', model, ["GET", "POST"], ['model'])
 
-@app.route("/prompt/temp", methods=["GET", "POST"])
-@app.route(app_path+"/temp", methods=["GET", "POST"])
-@cross_origin()
-def temp() -> make_response:
-    """ Change LLM temperature """
-    try:
-        temperature = float(request.values['temp'])
-        if temperature < 0.0 or temperature > 2.0:
-            raise HTTPException
-        globvars['Temperature'] = temperature
-        globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
-                                     temperature=globvars['Temperature'])
-        initialize_chain(True)
-        logging.info("Temperature set to %s", str(globvars['Temperature']))
-        return make_response("Temperature set to: " + str(globvars['Temperature']) , 200)
-    except HTTPException as e:
-        logging.error("Error setting temperature %s", str(e))
-        return make_response("Error setting temperature", 500)
+def temp(values):
+    """ Set temperature """
+    temperature = float(values[0])
+    if temperature < 0.0 or temperature > 2.0:
+        error_text = "Temperature "+str(temperature)+" not between 0.0 and 2.0"
+        logging.error(error_text)
+        raise HTTPException(error_text)
+    globvars['Temperature'] = temperature
+    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
+                        temperature=globvars['Temperature'])
+    initialize_chain(True)
+    return {'answer':'Temperature set to '+str(temperature)}
 
-@app.route("/prompt/reload", methods=["GET", "POST"])
-@app.route(app_path+"/reload", methods=["GET", "POST"])
-@cross_origin()
-def reload() -> make_response:
-    """ Reload documents to the chain """
-    try:
-        initialize_chain(True)
-        return make_response("Text reloaded", 200)
-    except HTTPException as e:
-        logging.error("Error reloading text: %s" ,str(e))
-        return make_response("Error reloading text", 500)
+create_call('temp', temp, ["GET", "POST"], ['temp'])
 
-@app.route("/prompt/clear", methods=["GET", "POST"])
-@app.route(app_path+"/clear", methods=["GET", "POST"])
-@cross_origin()
-def clear() -> make_response:
+def reload(values):
+    """ Reload documents """
+    initialize_chain(True)
+    return {'answer':'Documents reloaded'}
+
+create_call('reload', reload, ["GET", "POST"])
+
+def clear(values):
     """ Clear the cache """
     globvars['Store'].clear()
-    return make_response("History deleted", 200)
+    return {'answer':'History deleted'}
 
-@app.route("/prompt/cache", methods=["GET", "POST"])
-@app.route(app_path+"/cache", methods=["GET", "POST"])
-@cross_origin()
-def cache() -> make_response:
+create_call('clear', clear, ["GET", "POST"])
+
+def cache(values):
     """ Return cache contents """
     content = ""
     if globvars['Session'] in globvars['Store']:
@@ -366,12 +383,13 @@ def cache() -> make_response:
             else:
                 prefix = "User"
             content += prefix +  ":" + str(message) + "\n"
-    return make_response(content, 200)
+    return {'answer': content}
 
-@app.route("/prompt/files/<file>", methods=["GET"])
-@app.route(app_path+"/file/<file>", methods=["GET"])
-def send_files(file):
+create_call('cache', cache, ["GET", "POST"])
+
+def send_files(values):
     """ Serve HTML files """
+    file = values[0]
     html_dir = rc.get('DEFAULT','html')
     absolute_path = html_dir[0:1] == '/'
     if absolute_path:
@@ -382,60 +400,48 @@ def send_files(file):
         raise HTTPException("Parameter value for HTML not allowed")
     return send_file(serve_file)
 
-@app.route("/prompt/image", methods=["GET", "POST"])
-@app.route(app_path+"/image", methods=["GET", "POST"])
-@cross_origin()
-def process_image() -> make_response:
+create_call('files', send_files, ["GET"], ['file'], False)
+
+def process_image(values):
     """ Send image to ChatGPT and send prompt to analyse contents """
     logging.info(globvars['ModelText'])
+    my_url = values[0]
+    text   = values[1]
+    if not my_url.isalnum:
+        raise HTTPException("URL is not well-formed")
     if globvars['ModelText'] != 'gpt-4o':
-        return make_response("Image processing only available in gpt-4o", 500)
-    try:
-        logging.info("Using method: %s",request.method)
-        if request.method == 'GET':
-            my_url = request.values['image']
-            text = request.values['prompt']
-        if request.method == 'POST':
-            my_url = request.form['image']
-            text = request.form['prompt']
-        if not my_url.isalnum:
-            raise HTTPException
-        image_url = quote(my_url, safe='/:?=&')
-        logging.info("Processing image: %s, with prompt: %s", image_url, text)
-        bimage = encode_image(image_url)
-        chain = ChatOpenAI(model=globvars['ModelText'],
-                           temperature=globvars['Temperature'])
-        msg = chain.invoke(
-            [
-                AIMessage(content="Picture revealer"),
-                HumanMessage(content=[
-                    {"type": "text", "text": text},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
-                ])
-            ]
-        )
-        return make_response(msg.content, 200)
-    except HTTPException as e:
-        logging.error("Error processing image: %s", str(e))
-        return make_response("Error processing image", 500)
+        raise HTTPException("Image processing only available in gpt-4o")
 
-@app.route("/prompt/upload", methods=["POST"])
-@app.route(app_path+"/upload", methods=["POST"])
-@cross_origin()
-def upload_file():
+    image_url = quote(my_url, safe='/:?=&')
+    logging.info("Processing image: %s, with prompt: %s", image_url, text)
+    bimage = encode_image(image_url)
+    chain = ChatOpenAI(model=globvars['ModelText'],
+                        temperature=globvars['Temperature'])
+    msg = chain.invoke(
+        [
+            AIMessage(content="Picture revealer"),
+            HumanMessage(content=[
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+            ])
+        ]
+    )
+    return {'answer': msg.content}
+
+create_call('image', process_image, ["GET"], ['image','prompt'])
+
+def upload_file(values):
     """ Handles the file upload """
-    if 'filename' not in request.files:
-        logging.error("Error in upload data")
-        return make_response("Error in upload data", 500)
 
-    file = request.files['filename']
+    file = values['file']
     if file.filename == '':
-        logging.error('No file selected for uploading')
-        return make_response("Error in upload data, no filename found", 500)
+        error_text = "Error in upload data, no filename found"
+        logging.error(error_text)
+        raise HTTPException(error_text)
 
     filename = secure_filename(file.filename)
 
-    # module not iterable, so repeating code unfortunately
+    # module 'constants' is not iterable, so repeating code unfortunately
     found = False
     if PurePath(filename).match(rc.get('DEFAULT','data_glob_txt')):
         found = True
@@ -443,22 +449,20 @@ def upload_file():
         found = True
 
     if not found:
-        logging.info("File to upload has extension that doesn't match GLOB_ coonstants")
-        return make_response("File to upload has extension that doesn't match GLOB_ constants", 500)
+        error_text = "File to upload has extension that doesn't match GLOB_* constants"
+        logging.error(error_text)
+        raise HTTPException(error_text)
 
     filepath = os.path.join(rc.get('DEFAULT','data_dir'),filename)
 
-    try:
-        logging.info("Saving %s on: %s",filename,filepath)
-        file.save(filepath)
-        logging.info("File %s saved on: %s",filename,filepath)
-        initialize_chain(True)
-    except HTTPException as e:
-        logging.error("Image processing failed: %s",str(e))
-        return make_response("Error in upload data, no filename found", 500)
+    logging.info("Saving %s on: %s",filename,filepath)
+    file.save(filepath)
+    logging.info("File %s saved on: %s",filename,filepath)
+    initialize_chain(True)
+    return {'answer': 'Upload of '+filename+' completed'}
 
-    return make_response("Upload completed", 200)
-
+create_call('upload', upload_file, ["POST"])
+    
 @app.teardown_request
 def log_unhandled(e):
     if e is not None:
