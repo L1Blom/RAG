@@ -41,7 +41,7 @@ tests = {'OPENAI':
         'Temperature-too-high'  : ['test_temperature',2.1,500],
         'Prompt-text'           : ['test_prompt_text',{
             'prompt' : "prompt=who wrote rag service?",
-            'answer' : "RAG Service was developed by L1Blom."
+            'answer' : "RAG Service was developed by Leen Blom."
         }, 200],
         'Prompt-PDF'            : ['test_prompt_pdf',{
             'prompt' : "prompt=how many watchers has this GitHub library?",
@@ -90,7 +90,7 @@ class RagServiceMethods(unittest.TestCase):
         self.test_clear()
         self.test_prompt_text()
         answer1 = "User:content='who wrote rag service?'"
-        answer2 = "AI:content='RAG Service was developed by L1Blom.'"
+        answer2 = "AI:content='RAG Service was developed by Leen Blom.'"
         try:
             response = requests.get(api_url+"/cache", timeout=10000)
             status = response.status_code
@@ -139,7 +139,7 @@ class RagServiceMethods(unittest.TestCase):
         except requests.HTTPError as e:
             print("Error! "+str(e))
         self.assertEqual(status, 200)
-        self.assertEqual(result,"RAG Service was developed by L1Blom.")
+        self.assertEqual(result,"RAG Service was developed by Leen Blom.")
 
     def test_prompt_pdf(self):
         """ Test prompt """
@@ -162,7 +162,7 @@ class RagServiceMethods(unittest.TestCase):
             headers = {"Content-Type": "application/x-www-form-urlencoded"}
             data = {
                 "prompt": "what is written?",
-                "image" : api_url+"/file/Open-AI.jpg"
+                "image" : api_url+"/file?file=Open-AI.jpg"
             }
             response = requests.post(api_url + '/image', data=data, headers=headers, timeout=10000)
             status = response.status_code
@@ -170,7 +170,7 @@ class RagServiceMethods(unittest.TestCase):
         except requests.HTTPError as e:
             print("Error! "+str(e))
         self.assertEqual(status, 200)
-        self.assertEqual(result[0:35], 'The text in the image reads "OpenAI."'[0:35])
+        self.assertEqual(result[0:35], 'The text says "OpenAI."'[0:35])
 
 if __name__ == '__main__':
     print(unittest.main())

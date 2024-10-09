@@ -10,6 +10,7 @@ import base64
 import inspect
 import configparser
 import subprocess
+import pprint
 from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
@@ -34,7 +35,7 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.llms.ollama import Ollama
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-from langchain_groq import ChatGroq, chat_models
+from langchain_groq import ChatGroq
 from groq import Groq
 import config
 
@@ -81,19 +82,20 @@ def get_modelnames(mode, modeltext):
             env = llm+"_API_KEY"
             os.environ[env] = key
 
-    if mode == 'OPENAI':
-        client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
-    if mode == 'GROQ':
-        client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
-    if mode == 'OLLAMA':
-        client = None
-        result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE).stdout.decode('utf-8')
-        namelist = result.strip().split()
-        for name in namelist:
-            hit = name.find(':latest')
-            if hit>0:
-                model = name[0:hit]
-                names.append(model)            
+    match mode:
+        case 'OPENAI':
+            client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
+        case 'GROQ':
+            client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
+        case 'OLLAMA':
+            client = None
+            result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE).stdout.decode('utf-8')
+            namelist = result.strip().split()
+            for name in namelist:
+                hit = name.find(':latest')
+                if hit>0:
+                    model = name[0:hit]
+                    names.append(model)
 
     if client != None: # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
@@ -116,11 +118,11 @@ rctemp   = globvars['Temperature'] = rc.getfloat('DEFAULT','temperature')
 if rctemp < 0.0 or rctemp > 2.0:
     logging.error("Temperature not between 0.0 and 2.0: %f", rctemp)
     sys.exit(os.EX_CONFIG)
-globvars['Chain']   = None
-globvars['Store']   = {}
-globvars['Session'] = uuid.uuid4()
+globvars['Chain']       = None
+globvars['Store']       = {}
+globvars['Session']     = uuid.uuid4()
+globvars['VectorStore'] = None
 modelnames = get_modelnames(rcllms, rcmodel)
-
 
 if globvars['USE_LLM'] == "OPENAI":
     globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
@@ -128,7 +130,6 @@ if globvars['USE_LLM'] == "OLLAMA":
     globvars['LLM']     = Ollama(model=rcmodel)
 if globvars['USE_LLM'] == "GROQ":
     globvars['LLM']     = ChatGroq(model=rcmodel)
-
 
 if rcmodel not in modelnames:
     print(f"Error: modelname {rcmodel} not known with {rcllms}")
@@ -166,7 +167,6 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
         logging.info("%s: %s",prefix, message.content)
     return Store[session_id]
 
-
 def encode_image(image_url) -> base64:
     """ Encode image to base64 """
     logging.info("Encoding image: %s",image_url)
@@ -177,7 +177,11 @@ def encode_image(image_url) -> base64:
 
 def embedding_function() -> OpenAIEmbeddings:
     """ Return an Embedding"""
-    return OpenAIEmbeddings()
+    match globvars['USE_LLM']:
+        case "OPENAI":
+            return OpenAIEmbeddings(model=rc.get('LLMS.'+rcllms,'embedding_model'))
+        case _:
+            return OpenAIEmbeddings()
 
 def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
@@ -191,7 +195,8 @@ def initialize_chain(new_vectorstore=False):
             path=rc.get('DEFAULT','persistence'))
         vectorstore = Chroma(client=persistent_client,
                              collection_name=collection_name,
-                             embedding_function=OpenAIEmbeddings())
+                             collection_metadata={"hnsw:space": "cosine"},
+                             embedding_function=embedding_function())
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
         persistent_client = chromadb.PersistentClient(
@@ -204,7 +209,8 @@ def initialize_chain(new_vectorstore=False):
         persistent_client.delete_collection(name=collection_name)
         vectorstore = Chroma(client=persistent_client,
                              collection_name=collection_name,
-                             embedding_function=OpenAIEmbeddings())
+                             collection_metadata={"hnsw:space": "cosine"},
+                             embedding_function=embedding_function())
         # Delete previous stored documents
 
         # Load text files
@@ -241,7 +247,9 @@ def initialize_chain(new_vectorstore=False):
             vectorstore.add_documents(splits)
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 8})
+    globvars['VectorStore'] = vectorstore
+    retriever = vectorstore.as_retriever(search_type="similarity_score_threshold",
+        search_kwargs={'score_threshold': rc.getfloat('DEFAULT','score'), 'k':8})
 
     ### Contextualize question ###
     contextualize_q_system_prompt = rc.get('DEFAULT','contextualize_q_system_prompt')
@@ -281,7 +289,7 @@ def initialize_chain(new_vectorstore=False):
     logging.info("Chain initialized: %s",globvars['ModelText'])
     return True
 
-def create_call(name, function, methods, params=[], response_output=True):
+def create_call(name, function, methods, params=[], response_output="text"):
     """ Create Flask route """
     app_path = "/prompt/"+rc.get('DEFAULT','id')
     #@app.route(app_path+name, methods=methods)
@@ -300,12 +308,23 @@ def create_call(name, function, methods, params=[], response_output=True):
                         logging.info("%s: %s", param, values[:-1])
         try: 
             result = function(values)
-            if response_output:
-                logging.info("Result %s: %s",name, result['answer'])
-                return make_response(result['answer'], 200)
-            else:
-                logging.info("Processing %s succeded",name)
-                return result
+            match response_output:
+                case "text":
+                    logging.info("Result %s: %s",name, result['answer'])
+                    return make_response(result['answer'], 200)
+                case "context":
+                    mylist = [item.to_json() for item in result['context']]
+                    mylist = pprint.pformat(object=[item['kwargs'] for item in mylist], width=132)
+                    logging.info("Processing %s succeded",name)
+                    return mylist
+                case "file":
+                    logging.info("Processing %s succeded",name)
+                    return result
+                case "search":
+                    logging.info("Processing %s succeded",name)
+                    mylist = pprint.pformat(object=[item for item in result],width=132)
+                    return mylist
+                
         except HTTPException as e:
             logging.error("Error processing %s: %s",name, str(e))
             return make_response(f"Error processing {name}", 500)
@@ -319,13 +338,20 @@ def create_call(name, function, methods, params=[], response_output=True):
 
 def prompt(values):
     """ Answer the prompt """
-    prompt = values[0]
     return globvars['Chain'].invoke(
-            {"input": prompt},
+            {"input": values[0]},
             config={"configurable": {"session_id": globvars['Session']}},
         )
 
 create_call('', prompt, ["GET", "POST"], ['prompt'])
+create_call('full', prompt, ["GET", "POST"], ['prompt'], "context")
+
+def search(values):
+    """ Search in vectorstore """
+    answer = globvars['VectorStore'].similarity_search_with_relevance_scores(values[0],10)
+    return answer
+
+create_call('search', search, ["GET", "POST"], ['prompt'],"search")
 
 def log_error(error_text):
     logging.error(error_text)
@@ -400,7 +426,7 @@ def send_files(values):
         log_error("Parameter value for HTML not allowed")
     return send_file(serve_file)
 
-create_call('files', send_files, ["GET"], ['file'], False)
+create_call('file', send_files, ["GET"], ['file'], "file")
 
 def process_image(values):
     """ Send image to ChatGPT and send prompt to analyse contents """
@@ -428,7 +454,7 @@ def process_image(values):
     )
     return {'answer': msg.content}
 
-create_call('image', process_image, ["GET"], ['image','prompt'])
+create_call('image', process_image, ["GET","POST"], ['image','prompt'])
 
 def upload_file(values):
     """ Handles the file upload """
