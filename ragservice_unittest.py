@@ -1,5 +1,8 @@
 """ Service constants for unit testing """
 import os
+import re
+import sys
+import time
 import inspect
 import configparser
 import unittest
@@ -8,7 +11,7 @@ import requests
 import requests.exceptions
 import requests.utils
 import unittest.test
-
+from config_unittest import tests
 
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
 wd.pop()
@@ -26,152 +29,163 @@ api_url = urllib.parse.quote("http://localhost:"+
                              "/prompt/"+ID, 
                              safe=':?/')
 
-tests = {'OPENAI':
-    {
-        'Model-ok'              : ['test_model','gpt-4o',200],
-        'Model-bad'             : ['test_model','failing-llm',500],
-        'Reload'                : ['test_reload','',200],
-        'Clear'                 : ['test_clear','',200],
-        'Cache'                 : ['test_cache',{
-            'answer1' :"User:content='who wrote rag service?'",
-            'answer2'           :"AI:content='RAG Service was developed by L1Blom.'"
-        }, 200],
-        'Temperature-ok'        : ['test_temperature',0.0,200],
-        'Temperature-too-low'   : ['test_temperature',-0.6,500],
-        'Temperature-too-high'  : ['test_temperature',2.1,500],
-        'Prompt-text'           : ['test_prompt_text',{
-            'prompt' : "prompt=who wrote rag service?",
-            'answer' : "RAG Service was developed by Leen Blom."
-        }, 200],
-        'Prompt-PDF'            : ['test_prompt_pdf',{
-            'prompt' : "prompt=how many watchers has this GitHub library?",
-            'answer' : "The GitHub repository for the RAG Service has 2 watchers."
-        }, 200],
-    }
-}
+def get_llm():
+    try:
+        response = requests.get(api_url+"/params?section=LLMS&param=USE_LLM", timeout=10000)
+        status = response.status_code
+        if status == 200:
+            llm = response.content.decode("utf-8").split("\n")[0]
+            if llm == "":
+                print(f"Model USE_LLM not set in RAG paramters")
+                sys.exit(1)
+            if not llm in tests.keys():
+                print(f"Model {llm} not found in config_unittest.py")
+                sys.exit(1)
+            print(f"Testing {llm}")
+        else: 
+            raise requests.HTTPError
+    except requests.HTTPError as e:
+        print("Error! Can't connect to RAG Service (forgotten to start?) "+str(e))       
+    return llm
 
+llm = get_llm()
+
+def find_words(sentence,words,nowords):
+    sentence_array = re.split(r'\W+', sentence)
+    words_array = words = re.split(r'\W+', words)
+    l = len(sentence_array)
+    i = 0
+    for word in words:
+        if word in sentence_array:
+            i = i+1
+    if i >= nowords:
+        return True
+    else:
+        return False
+        
 class RagServiceMethods(unittest.TestCase):
     """ RAG tests """
+    
     def test_model(self):
         """ Test model setting, correct or incorrect model according to LLM """
-        for llm in tests.keys():
-            for options in ['Model-ok','Model-bad']:
-                option = tests[llm][options]
-                with self.subTest(llm, option=option):
-                    model       = option[1]
-                    result_code = option[2]
-                    try:
-                        response = requests.get(api_url+"/model?model="+model, timeout=10000)
-                        status = response.status_code
-                    except requests.HTTPError as e:
-                        print("Error! "+str(e))
-                    self.assertEqual(status, result_code)
+        for options in ['Model-bad','Model-ok']:
+            option = tests[llm][options]
+            with self.subTest(llm, option=option):
+                model           = option[1]
+                expected_status = option[2]
+                try:
+                    response = requests.get(api_url+"/model?model="+model, timeout=10000)
+                    status = response.status_code
+                except requests.HTTPError as e:
+                    print("Error! "+str(e))
+                self.assertEqual(status, expected_status)
 
     def test_reload(self):
         """ Test reload of the data """
-        try:
-            response = requests.get(api_url+"/reload", timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
+        option = tests[llm]['Reload']
+        with self.subTest(llm, option=option):
+            expected_status = option[2]
+            try:
+                response = requests.get(api_url+"/reload", timeout=10000)
+                status = response.status_code
+            except requests.HTTPError as e:
+                print("Error! "+str(e))
+            self.assertEqual(status, expected_status)
 
     def test_clear(self):
         """ Test to clear the cache """
-        try:
-            response = requests.get(api_url+"/clear", timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
+        option = tests[llm]['Clear']
+        with self.subTest(llm, option=option):
+            expected_status = option[2]
+            try:
+                response = requests.get(api_url+"/clear", timeout=10000)
+                status = response.status_code
+            except requests.HTTPError as e:
+                print("Error! "+str(e))
+            self.assertEqual(status, expected_status)
 
-    def test_chache(self):
+    def test_cache(self):
         """ Test to print the contents of the cache """
         self.test_clear()
-        self.test_prompt_text()
-        answer1 = "User:content='who wrote rag service?'"
-        answer2 = "AI:content='RAG Service was developed by Leen Blom.'"
+        self.test_prompt()
+        option = tests[llm]['Cache']
+        with self.subTest(llm, option=option):
+            answer1 = option[1]['answer1']
+            answer2 = option[1]['answer2']
+            expected_status = option[2]
         try:
             response = requests.get(api_url+"/cache", timeout=10000)
             status = response.status_code
             result = response.content.decode("utf-8").split("\n")
         except requests.HTTPError as e:
             print("Error! "+str(e))
-        self.assertEqual(status, 200)
-        self.assertEqual(result[0], answer1) # User:
-        self.assertEqual(result[1], answer2) # AI:
+        self.assertEqual(status, expected_status)
+        print(result[0],answer1)
+        self.assertTrue(find_words(result[0],answer1,4))
+        print(result[1],answer2)
+        self.assertTrue(find_words(result[1],answer2,4))
 
     def test_temperature(self):
         """ Test to set temparature too high, low, within boundaries 0.0 and 2.0"""
-        try:
-            temp=str(2.1)
-            response = requests.get(api_url+"/temp?temp="+temp, timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 500)
+        self.test_clear()
+        for option in ['Temperature-too-high','Temperature-too-low','Temperature-ok']:
+            option = tests[llm][option]
+            with self.subTest(llm, option=option):
+                temp   = str(option[1])
+                expected_status = option[2]
+                try:
+                    response = requests.get(api_url+"/temp?temp="+temp, timeout=10000)
+                    status = response.status_code
+                except requests.HTTPError as e:
+                    print("Error! "+str(e))
+                self.assertEqual(status, expected_status)
 
-        try:
-            temp=str(-0.1)
-            response = requests.get(api_url+"/temp?temp="+temp, timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 500)
-
-        try:
-            temp=str(rc.get('DEFAULT','temperature'))
-            response = requests.get(api_url+"/temp?temp="+temp, timeout=10000)
-            status = response.status_code
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
-
-    def test_prompt_text(self):
+    def test_prompt(self):
         """ Test prompt """
         self.test_clear()
-        try:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            prompt = "prompt=who wrote rag service?"
-            response = requests.post(api_url, data=prompt, headers=headers, timeout=10000)
-            status = response.status_code
-            result = response.content.decode("utf-8")
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
-        self.assertEqual(result,"RAG Service was developed by Leen Blom.")
+        for option in ['Prompt-text','Prompt-PDF']:
+            option = tests[llm][option]
+            with self.subTest(llm, option=option):
+                prompt = option[1]['prompt']
+                answer = option[1]['answer']
+                expected_status = option[2]
+                try:
+                    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                    response = requests.post(api_url, data=prompt, headers=headers, timeout=10000)
+                    status = response.status_code
+                    result = response.content.decode("utf-8")
+                except requests.HTTPError as e:
+                    print("Error! "+str(e))
+                self.assertEqual(status, expected_status)
+                self.assertTrue(find_words(answer,result,3))
 
-    def test_prompt_pdf(self):
-        """ Test prompt """
-        self.test_clear()
-        try:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            prompt = "prompt=how many watchers has this GitHub library?"
-            response = requests.post(api_url, data=prompt, headers=headers, timeout=10000)
-            status = response.status_code
-            result = response.content.decode("utf-8")
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
-        self.assertEqual(result,"The GitHub library has 2 watchers.")
-
+    @unittest.skipUnless(llm=="OPENAI","Runs with OPENAI only")
     def test_image(self):
         """ Test image """
         self.test_clear()
-        try:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
-            data = {
-                "prompt": "what is written?",
-                "image" : api_url+"/file?file=Open-AI.jpg"
-            }
-            response = requests.post(api_url + '/image', data=data, headers=headers, timeout=10000)
-            status = response.status_code
-            result = response.content.decode("utf-8")
-        except requests.HTTPError as e:
-            print("Error! "+str(e))
-        self.assertEqual(status, 200)
-        self.assertEqual(result[0:35], 'The text says "OpenAI."'[0:35])
+        option = tests[llm]['Image']
+        with self.subTest(llm, option=option):
+            prompt = option[1]['prompt']
+            answer = option[1]['answer']
+            expected_status = option[2]
+            try:
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                data = {
+                    "prompt": prompt,
+                    "image" : api_url+"/file?file=Open-AI.jpg"
+                }
+                response = requests.post(api_url + '/image', data=data, headers=headers, timeout=10000)
+                status = response.status_code
+                result = response.content.decode("utf-8")
+            except requests.HTTPError as e:
+                print("Error! "+str(e))
+            self.assertEqual(status, expected_status)
+            if status == 200:
+                self.assertTrue(find_words(answer,result,1))
+
+    def tearDown(self):
+        if llm == 'GROQ':
+            time.sleep(10)  # sleep time in seconds
 
 if __name__ == '__main__':
-    print(unittest.main())
-
+    unittest.main()

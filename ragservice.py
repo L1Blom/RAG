@@ -86,6 +86,7 @@ def get_modelnames(mode, modeltext):
         case 'OPENAI':
             client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
         case 'GROQ':
+            client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
             client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
         case 'OLLAMA':
             client = None
@@ -295,6 +296,7 @@ def create_call(name, function, methods, params=[], response_output="text"):
     #@app.route(app_path+name, methods=methods)
     @cross_origin()
     def _function():
+        logging.info("This call uses model %s",globvars['ModelText'])
         if len(request.files) > 0:
             values = request.files
         else:
@@ -302,10 +304,10 @@ def create_call(name, function, methods, params=[], response_output="text"):
             for param in params:
                     if request.method == 'GET':
                         values.append(request.values[param])
-                        logging.info("%s: %s", param, values[:-1])
+                        logging.info("%s: %s", param, values[-1])
                     if request.method == 'POST':
                         values.append(request.form[param])
-                        logging.info("%s: %s", param, values[:-1])
+                        logging.info("%s: %s", param, values[-1])
         try: 
             result = function(values)
             match response_output:
@@ -336,6 +338,10 @@ def create_call(name, function, methods, params=[], response_output="text"):
     logging.info("path -> "+my_path+" "+','.join(params))
     app.add_url_rule(my_path, name, _function, methods=methods)
 
+def log_error(error_text):
+    logging.error(error_text)
+    raise HTTPException(error_text)
+
 def prompt(values):
     """ Answer the prompt """
     return globvars['Chain'].invoke(
@@ -353,9 +359,21 @@ def search(values):
 
 create_call('search', search, ["GET", "POST"], ['prompt'],"search")
 
-def log_error(error_text):
-    logging.error(error_text)
-    raise HTTPException(error_text)
+def parameters(values):
+    """ Return paramater values """
+    parameter = values[1]
+    section   = values[0]
+    answer = rc.get(section=section,option=parameter)
+    return {'answer':answer}
+
+create_call('params', parameters, ["GET"], ['section','param'])
+
+def model_names(values):
+    """ Return paramater values """
+    answer = modelnames
+    return {'answer':answer}
+
+create_call('modelnames', model_names, ["GET"])
 
 def model(values):
     """ Set the LLM model """

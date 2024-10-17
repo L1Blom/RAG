@@ -9,9 +9,9 @@ RAG Service is a template service for a retrieval-augmented generator based on t
 ## Installation
 
 1. Clone [L1Blom/rag](https://github.com/L1Blom/rag) to your project directory
-2. Move config.py_example to config.py and add your API Key
+2. Move config.py_example to config.py and add your API Keys
 3. Choose an ID for your instance, like MyDocs
-4. Copy constants/constants.py to constants_MyDocs.py
+4. Copy constants/constants.ini to constants_MyDocs.ini
 5. Change the contents of this file to reflect your situation
 6. Create a MyDocs/ directory in data/ and in MyDocs/ a directory vectorstore/ and html/
 7. Add the files for your RAG context, like text and PDF files, to your MyDocs/ directory
@@ -34,9 +34,25 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Parameter: prompt (string)
 
-    Your prompt to be send to openAI
+    Your prompt to be send
 
-2. /prompt/\<ID\>/model
+2. /prompt/\<ID\>/full
+
+    Parameter: prompt (string)
+
+    Your prompt to be send
+
+    Returns all document fragments used for this prompt
+
+3. /prompt/\<ID\>/search
+
+    Parameter: prompt (string)
+
+    Your prompt to be send
+
+    Similar search in the local documents, returns fragments and scores
+
+4. /prompt/\<ID\>/model
 
     Parameter: model (string)
 
@@ -44,7 +60,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
 
-3. /prompt/\<ID\>/temp
+5. /prompt/\<ID\>/temp
 
     Parameter: temp (string, will be cast to float)
 
@@ -54,25 +70,37 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Timeout can result in http 408 error (non-fatal)
 
-4. /prompt/\<ID\>/reload
+6. /prompt/\<ID\>/reload
 
     Parameters: none
 
     After adding files to your data directory, use this to reload the vector store
 
-5. /prompt/\<ID\>/clear
+7. /prompt/\<ID\>/clear
 
     Paramters: none
 
     Clears the cache, the in-memory history
 
-6. /prompt/\<ID\>/cache
+8. /prompt/\<ID\>/cache
 
     Paramaters: none
 
     Prints the cache contents to the response object
 
-7. /prompt/\<ID\>/image
+9. /prompt/\<ID\>/modelnames
+
+    Paramaters: none
+
+    Prints the names of the possible models used in the selected APIs
+
+10. /prompt/\<ID\>/params
+
+    Paramaters: section (string), param (string)
+
+    Prints the settings from the .ini file
+
+11. /prompt/\<ID\>/image
 
     Parameters: prompt (string), image (URL to image)
 
@@ -80,7 +108,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
 
-8. /prompt/\<ID\>/upload
+12. /prompt/\<ID\>/upload
 
     Parameters: file (string) (maximum size 16 Mb)
 
@@ -105,26 +133,47 @@ Your answer based on the context files provided in data/<ID>
 important contstants are:
 
 ```python
-# simple string like "mydata"
-ID="<your identifier>" 
+# simple string like "myDocs"
+ID = _unittest
 # Directory that will be scanned for files to be added to the context
-DATA_DIR="/home/data"
+DATA_DIR=data/_unittest
 # All the file extentions you want to be part of the context, see LangChain documentation
-DATA_GLOB_TXT="*.txt"
-DATA_GLOB_PDF="*.pdf"
+# Currently text and pdf are supported by RAG Service
+DATA_GLOB_TXT = *.txt
+DATA_GLOB_PDF = *.pdf
+# Persistence directory for vectorstore
+PERSISTENCE = data/_unittest/vectorstore
+# Where the HTML files reside, also needed for the unit tests
+HTML = data/_unittest/html
 ```
 
 ## Unit tests
 
 To run the unit tests, run the program in the project directory using the ID '_unittest'.
 It will start a local RAG service accessible at port 8888 (see constants__unittest.py for all defaults).
+When it is running, unit tests can be performed.
+Currently when USE_LLM is set to OPENAI, it will run smoothly.
+Other settings like GROQ might fail depending on the licences you have because of too many calls per minute. if so, try to run the unit test one by one.
 
 ```bash
 <your virtual environment>/bin/python ragservice.py _unittest
-INFO:root:Working directory is /home/leen/projects/rag
+IINFO:root:Working directory is /home/leen/projects/rag
 INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
-INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See https://docs.trychroma.com/telemetry for more information.
-INFO:root:Loaded 6 chunks from persistent vectorstore
+INFO:root:path -> /prompt/_unittest prompt
+INFO:root:path -> /prompt/_unittest/full prompt
+INFO:root:path -> /prompt/_unittest/search prompt
+INFO:root:path -> /prompt/_unittest/params section,param
+INFO:root:path -> /prompt/_unittest/modelnames 
+INFO:root:path -> /prompt/_unittest/model model
+INFO:root:path -> /prompt/_unittest/temp temp
+INFO:root:path -> /prompt/_unittest/reload 
+INFO:root:path -> /prompt/_unittest/clear 
+INFO:root:path -> /prompt/_unittest/cache 
+INFO:root:path -> /prompt/_unittest/file file
+INFO:root:path -> /prompt/_unittest/image image,prompt
+INFO:root:path -> /prompt/_unittest/upload 
+INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+INFO:root:Loaded 8 chunks from persistent vectorstore
 INFO:root:Chain initialized: gpt-4o
  * Serving Flask app 'ragservice'
  * Debug mode: off
@@ -139,17 +188,18 @@ Now you are able to run the unit tests:
 
 ```bash
 <your virtual environament>/bin/python ragservice_unittest.py -v
-test_chache_content (__main__.RagServiceMethods.test_chache_content)
-Test to print the contents of the cache ... ok
+Testing OPENAI
+test_cache (__main__.RagServiceMethods.test_cache)
+Test to print the contents of the cache ... User:content='who wrote rag service?' User:content='who wrote rag service?'
+AI:content='RAG Service was developed by Leen Blom.' AI:content='RAG Service was developed by L1Blom.'
+ok
 test_clear (__main__.RagServiceMethods.test_clear)
 Test to clear the cache ... ok
 test_image (__main__.RagServiceMethods.test_image)
 Test image ... ok
 test_model (__main__.RagServiceMethods.test_model)
-Test model setting, correct or incorrect model according to OpenAI ... ok
-test_prompt_pdf (__main__.RagServiceMethods.test_prompt_pdf)
-Test prompt ... ok
-test_prompt_text (__main__.RagServiceMethods.test_prompt_text)
+Test model setting, correct or incorrect model according to LLM ... ok
+test_prompt (__main__.RagServiceMethods.test_prompt)
 Test prompt ... ok
 test_reload (__main__.RagServiceMethods.test_reload)
 Test reload of the data ... ok
@@ -157,14 +207,13 @@ test_temperature (__main__.RagServiceMethods.test_temperature)
 Test to set temparature too high, low, within boundaries 0.0 and 2.0 ... ok
 
 ----------------------------------------------------------------------
-Ran 8 tests in 9.804s
+Ran 7 tests in 17.713s
 
 OK
 ```
 
 ## TODO's and wishes
 
-- Other API's than OpenAI and other LLM's
 - A simple frontend from the GitHub community
 
 ## Contributing
