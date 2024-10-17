@@ -188,4 +188,5 @@ class RagServiceMethods(unittest.TestCase):
             time.sleep(10)  # sleep time in seconds
 
 if __name__ == '__main__':
+    """ Run the tests """
     unittest.main()
