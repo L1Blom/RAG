@@ -11,12 +11,13 @@ import inspect
 import configparser
 import subprocess
 import pprint
+import json
 from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
 from urllib.parse import quote
 import chromadb
-from flask import Flask, make_response, request, send_file
+from flask import Flask, make_response, request, send_file, Response
 from werkzeug.exceptions import HTTPException
 from werkzeug.utils import secure_filename
 from flask_cors import CORS, cross_origin
@@ -68,6 +69,13 @@ def context_processor():
     """ Store the globals in a Flask way """
     return dict()
 
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        res = Response()
+        res.headers['X-Content-Type-Options'] = '*'
+        return res
+
 def get_modelnames(mode, modeltext):
     """ 
         Load all API keys to environment vairiables.
@@ -98,9 +106,15 @@ def get_modelnames(mode, modeltext):
                     model = name[0:hit]
                     names.append(model)
 
-    if client != None: # Must be made more explicit, Ollama doesn't have a client
+    if client is not None:  # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
-        names = [str(dict(modelitem)['id']) for modelitem in models]
+        names = sorted([
+            str(dict(modelitem)['id']) 
+            for modelitem in models 
+            if str(dict(modelitem)['id']).startswith(('gpt','o1','o3')) 
+                and 'audio' not in str(dict(modelitem)['id'])
+                and 'video' not in str(dict(modelitem)['id'])
+        ])
 
     if not modeltext in names:
         logging.error("Model %s not found in %s models",modeltext, mode)
@@ -112,10 +126,17 @@ def get_modelnames(mode, modeltext):
 logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
 logging.info("Working directory is %s", os.getcwd())
 
-globvars = context_processor()
-rcllms   = globvars['USE_LLM']     = rc.get('LLMS','use_llm')
-rcmodel  = globvars['ModelText']   = rc.get('LLMS.'+rcllms,'modeltext')
-rctemp   = globvars['Temperature'] = rc.getfloat('DEFAULT','temperature')
+globvars        = context_processor()
+rcllms          = globvars['USE_LLM']      = rc.get('LLMS','use_llm')
+rcmodel         = globvars['ModelText']    = rc.get('LLMS.'+rcllms,'modeltext')
+rctemp          = globvars['Temperature']  = rc.getfloat('DEFAULT','temperature')
+rcsimilar       = globvars['Similar']      = rc.getint('DEFAULT','similar') 
+rcscore         = globvars['Score']        = rc.getfloat('DEFAULT','score') 
+rcsysprompt1    = globvars['SystemPrompt'] = rc.get('DEFAULT','contextualize_q_system_prompt')
+rcsysprompt2    = globvars['SystemPrompt'] = rc.get('DEFAULT','system_prompt')
+rcchunksize     = globvars['ChunkSize']    = rc.getint('DEFAULT','chunk_size') 
+rcchunkoverlap  = globvars['ChunkOverlap'] = rc.getint('DEFAULT','chunk_overlap') 
+
 if rctemp < 0.0 or rctemp > 2.0:
     logging.error("Temperature not between 0.0 and 2.0: %f", rctemp)
     sys.exit(os.EX_CONFIG)
@@ -123,6 +144,8 @@ globvars['Chain']       = None
 globvars['Store']       = {}
 globvars['Session']     = uuid.uuid4()
 globvars['VectorStore'] = None
+globvars['NoChunks']    = 0
+
 modelnames = get_modelnames(rcllms, rcmodel)
 
 if globvars['USE_LLM'] == "OPENAI":
@@ -198,6 +221,7 @@ def initialize_chain(new_vectorstore=False):
                              collection_name=collection_name,
                              collection_metadata={"hnsw:space": "cosine"},
                              embedding_function=embedding_function())
+        globvars['NoChunks'] = len(vectorstore.get()['ids'])
         logging.info("Loaded %s chunks from persistent vectorstore", len(vectorstore.get()['ids']))
     else:
         persistent_client = chromadb.PersistentClient(
@@ -205,7 +229,7 @@ def initialize_chain(new_vectorstore=False):
 
         # Since we can't detect existence of a collection, we create one before deleting
         # Only needed in a start condition where no persitent store was found.
-        # This way all files are deleted compared to .reset which only disconnects.
+        # This way all fisimilarity_score_thresholdles are deleted compared to .reset which only disconnects.
         persistent_client.get_or_create_collection(name=collection_name)
         persistent_client.delete_collection(name=collection_name)
         vectorstore = Chroma(client=persistent_client,
@@ -213,7 +237,6 @@ def initialize_chain(new_vectorstore=False):
                              collection_metadata={"hnsw:space": "cosine"},
                              embedding_function=embedding_function())
         # Delete previous stored documents
-
         # Load text files
         loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                                  glob=rc.get('DEFAULT','data_glob_txt'),
@@ -249,33 +272,52 @@ def initialize_chain(new_vectorstore=False):
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
     globvars['VectorStore'] = vectorstore
-    retriever = vectorstore.as_retriever(search_type="similarity_score_threshold",
-        search_kwargs={'score_threshold': rc.getfloat('DEFAULT','score'), 'k':8})
+    globvars['NoChunks'] = len(vectorstore.get()['ids'])
+    retriever = vectorstore.as_retriever(search_type=rc.get('DEFAULT','search_type'),
+        search_kwargs={'score_threshold': rc.getfloat('DEFAULT','score'), 
+                       'k':8})
 
     ### Contextualize question ###
-    contextualize_q_system_prompt = rc.get('DEFAULT','contextualize_q_system_prompt')
-    contextualize_q_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ]
-    )
+    if rcmodel.startswith("o1"):
+        contextualize_q_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", rcsysprompt1),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+    else:
+        contextualize_q_prompt = ChatPromptTemplate.from_messages(
+            [
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+        
     history_aware_retriever = create_history_aware_retriever(
         this_model, retriever, contextualize_q_prompt
     )
 
     ### Answer question ###
-    system_prompt = rc.get('DEFAULT','system_prompt') + (
+    system_prompt = rcsysprompt2 + (
         "{context}"
     )
-    qa_prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ]
-    )
+    if rcmodel.startswith("o1"):
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+    else:
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", system_prompt),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
+        
     question_answer_chain = create_stuff_documents_chain(this_model, qa_prompt)
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
@@ -316,15 +358,23 @@ def create_call(name, function, methods, params=[], response_output="text"):
                     return make_response(result['answer'], 200)
                 case "context":
                     mylist = [item.to_json() for item in result['context']]
+                    myanswer = result['answer']
                     mylist = pprint.pformat(object=[item['kwargs'] for item in mylist], width=132)
                     logging.info("Processing %s succeded",name)
+                    return "\n".join([mylist,myanswer,""])
+                case "json":
+                    logging.info("Processing %s succeded",name)
+                    mylist = {str(item):str(result[item]) for item in result}
                     return mylist
                 case "file":
                     logging.info("Processing %s succeded",name)
                     return result
                 case "search":
                     logging.info("Processing %s succeded",name)
-                    mylist = pprint.pformat(object=[item for item in result],width=132)
+                    mylist = [{'page_content':item[0].page_content,
+                              'metadata':item[0].metadata,
+                              'score':item[1]}
+                              for item in result]
                     return mylist
                 
         except HTTPException as e:
@@ -354,10 +404,15 @@ create_call('full', prompt, ["GET", "POST"], ['prompt'], "context")
 
 def search(values):
     """ Search in vectorstore """
-    answer = globvars['VectorStore'].similarity_search_with_relevance_scores(values[0],10)
+    sim = int(globvars['Similar'])
+    if (len(values) == 2):
+        sim = int(values[1])
+    answer = globvars['VectorStore'].similarity_search_with_relevance_scores(
+        values[0],
+        sim)
     return answer
 
-create_call('search', search, ["GET", "POST"], ['prompt'],"search")
+create_call('search', search, ["GET", "POST"], ['prompt','similar'],"search")
 
 def parameters(values):
     """ Return paramater values """
@@ -367,6 +422,12 @@ def parameters(values):
     return {'answer':answer}
 
 create_call('params', parameters, ["GET"], ['section','param'])
+
+def globals(values):
+    """ Return global values """
+    return globvars
+
+create_call('globals', globals, ["GET"], [], 'json')
 
 def model_names(values):
     """ Return paramater values """
@@ -441,10 +502,42 @@ def send_files(values):
     else:
         serve_file = os.path.normpath(os.path.join(base_dir + html_dir,file))
     if not serve_file.startswith(base_dir):
-        log_error("Parameter value for HTML not allowed")
+        logging.error("Parameter value for HTML not allowed")
+    logging.info('File served: '+serve_file)
     return send_file(serve_file)
 
 create_call('file', send_files, ["GET"], ['file'], "file")
+
+def list_files(values):
+    """ List context files """
+    file = values[0]
+    action = values[1]
+    if action not in ['list','delete']:
+        logging.error(f"Action {action} value not allowed, only list or delete")
+    context_dir = rc.get('DEFAULT','data_dir')
+    serve_files = os.path.normpath(os.path.join(base_dir,context_dir))
+    if not serve_files.startswith(base_dir):
+        logging.error("Parameter value for DATA_DIR not allowed")
+    all_files = os.listdir(serve_files)
+    output = {
+        "name": "Context files",
+        "type": "folder",
+        "items": []
+    }
+    if action == 'delete':
+        os.remove(os.path.join(serve_files,file))  
+    context_files = [file for file in all_files if os.path.isfile(os.path.join(serve_files,file))]  
+    logging.info('Context files: '+ ','.join(context_files))
+    for file in context_files:
+        output['items'].append(
+            {
+                "name": file,
+                "type": "file",
+            }
+        )
+    return output
+
+create_call('context', list_files, ["GET"],['file','action'],"file")
 
 def process_image(values):
     """ Send image to ChatGPT and send prompt to analyse contents """
