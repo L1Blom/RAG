@@ -414,6 +414,17 @@ def search(values):
 
 create_call('search', search, ["GET", "POST"], ['prompt','similar'],"search")
 
+def documents(values):
+    """ Get documents from vectorstore """
+    id = values[0]
+    if id != '':
+        documents = globvars['VectorStore'].get(id)
+    else:
+        documents = globvars['VectorStore'].get()
+    return documents
+
+create_call('documents', documents, ["GET"], ['id'],"json")
+
 def parameters(values):
     """ Return paramater values """
     parameter = values[1]
@@ -450,6 +461,21 @@ def model(values):
     return {'answer':'Model set to '+this_model}
     
 create_call('model', model, ["GET", "POST"], ['model'])
+
+def chunk(values):
+    """ Set the LLM model """
+    this_chunk_size = int(values[0])
+    this_chunk_overlap = int(values[1])
+    if this_chunk_size < 1 or this_chunk_size > 1000:
+        log_error("Chunk size "+str(this_chunk_size)+" not between 1 and 1000") 
+    if this_chunk_overlap < 0 or this_chunk_overlap > 100:
+        log_error("Chunk overlap "+str(this_chunk_overlap)+" not between 0 and 100")
+    globvars['ChunkSize'] = this_chunk_size
+    globvars['ChunkOverlap'] = this_chunk_overlap
+    initialize_chain(True)
+    return {'answer':'Chunk set to '+str(this_chunk_size)+' with overlap '+str(this_chunk_overlap)}
+    
+create_call('chunk', chunk, ["GET", "POST"], ['chunk_size','chunk_overlap'])
 
 def temp(values):
     """ Set temperature """
