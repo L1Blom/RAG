@@ -2,6 +2,9 @@
 
 RAG Service is a template service for a retrieval-augmented generator based on the examples of LangChain. See: [Build a Retrieval Augmented Generation (RAG) App](https://python.langchain.com/v0.2/docs/tutorials/rag/)
 
+This service can be used with curl but there is another project that serves the user interface:
+[L1Blom/ragui](https://github.com/L1Blom/ragui)
+
 ## Technologies
 
 [![Used in this project](https://skillicons.dev/icons?i=vscode,py,flask,ai,md,linux,bash,nginx,git,raspberrypi)](https://skillicons.dev)
@@ -154,22 +157,29 @@ It will start a local RAG service accessible at port 8888 (see constants__unitte
 When it is running, unit tests can be performed.
 Currently when USE_LLM is set to OPENAI, it will run smoothly.
 Other settings like GROQ might fail depending on the licences you have because of too many calls per minute. if so, try to run the unit test one by one.
+See below all possible API-calls and paramters:
 
 ```bash
 <your virtual environment>/bin/python ragservice.py _unittest
-IINFO:root:Working directory is /home/leen/projects/rag
+INFO:root:Working directory is /home/leen/projects/rag
 INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
 INFO:root:path -> /prompt/_unittest prompt
 INFO:root:path -> /prompt/_unittest/full prompt
-INFO:root:path -> /prompt/_unittest/search prompt
+INFO:root:path -> /prompt/_unittest/search prompt,similar
+INFO:root:path -> /prompt/_unittest/documents id
 INFO:root:path -> /prompt/_unittest/params section,param
+INFO:root:path -> /prompt/_unittest/globals 
 INFO:root:path -> /prompt/_unittest/modelnames 
+INFO:root:path -> /prompt/_unittest/embeddingnames 
 INFO:root:path -> /prompt/_unittest/model model
+INFO:root:path -> /prompt/_unittest/embeddings embedding
+INFO:root:path -> /prompt/_unittest/chunk chunk_size,chunk_overlap
 INFO:root:path -> /prompt/_unittest/temp temp
 INFO:root:path -> /prompt/_unittest/reload 
 INFO:root:path -> /prompt/_unittest/clear 
 INFO:root:path -> /prompt/_unittest/cache 
 INFO:root:path -> /prompt/_unittest/file file
+INFO:root:path -> /prompt/_unittest/context file,action
 INFO:root:path -> /prompt/_unittest/image image,prompt
 INFO:root:path -> /prompt/_unittest/upload 
 INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
@@ -214,7 +224,7 @@ OK
 
 ## TODO's and wishes
 
-- A simple frontend from the GitHub community
+- None at the moment
 
 ## Contributing
 
