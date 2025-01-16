@@ -76,12 +76,13 @@ def handle_preflight():
         res.headers['X-Content-Type-Options'] = '*'
         return res
 
-def get_modelnames(mode, modeltext):
+def get_modelnames(mode, modeltext, embedding_model=None):
     """ 
         Load all API keys to environment vairiables.
         Return possible modelnames and check the chosen one.
     """
-    names = []
+    modelnames = []
+    embeddingnames = []
     
     for llm in rc.get('LLMS','llms').split(','):
         option = llm+"_APIKEY"
@@ -104,11 +105,16 @@ def get_modelnames(mode, modeltext):
                 hit = name.find(':latest')
                 if hit>0:
                     model = name[0:hit]
-                    names.append(model)
+                    modelnames.append(model)
 
     if client is not None:  # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
-        names = sorted([
+        embeddingnames = sorted([
+            str(dict(modelitem)['id']) 
+            for modelitem in models 
+            if str(dict(modelitem)['id']).startswith(('text')) 
+        ])
+        modelnames = sorted([
             str(dict(modelitem)['id']) 
             for modelitem in models 
             if str(dict(modelitem)['id']).startswith(('gpt','o1','o3')) 
@@ -116,11 +122,15 @@ def get_modelnames(mode, modeltext):
                 and 'video' not in str(dict(modelitem)['id'])
         ])
 
-    if not modeltext in names:
+    if not modeltext in modelnames:
         logging.error("Model %s not found in %s models",modeltext, mode)
         sys.exit(os.EX_CONFIG)
 
-    return names
+    if not embedding_model in embeddingnames:
+        logging.error("embedding %s not found in %s models",embedding_model, mode)
+        sys.exit(os.EX_CONFIG)
+
+    return modelnames, embeddingnames
 
 # Configureer logging
 logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
@@ -129,6 +139,7 @@ logging.info("Working directory is %s", os.getcwd())
 globvars        = context_processor()
 rcllms          = globvars['USE_LLM']      = rc.get('LLMS','use_llm')
 rcmodel         = globvars['ModelText']    = rc.get('LLMS.'+rcllms,'modeltext')
+rcembedding     = globvars['Embedding']    = rc.get('LLMS.'+rcllms,'embedding_model')
 rctemp          = globvars['Temperature']  = rc.getfloat('DEFAULT','temperature')
 rcsimilar       = globvars['Similar']      = rc.getint('DEFAULT','similar') 
 rcscore         = globvars['Score']        = rc.getfloat('DEFAULT','score') 
@@ -146,7 +157,7 @@ globvars['Session']     = uuid.uuid4()
 globvars['VectorStore'] = None
 globvars['NoChunks']    = 0
 
-modelnames = get_modelnames(rcllms, rcmodel)
+modelnames, embeddingnames = get_modelnames(rcllms, rcmodel, rcembedding)
 
 if globvars['USE_LLM'] == "OPENAI":
     globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
@@ -203,7 +214,7 @@ def embedding_function() -> OpenAIEmbeddings:
     """ Return an Embedding"""
     match globvars['USE_LLM']:
         case "OPENAI":
-            return OpenAIEmbeddings(model=rc.get('LLMS.'+rcllms,'embedding_model'))
+            return OpenAIEmbeddings(model=rcembedding)
         case _:
             return OpenAIEmbeddings()
 
@@ -447,6 +458,13 @@ def model_names(values):
 
 create_call('modelnames', model_names, ["GET"])
 
+def embedding_names(values):
+    """ Return paramater values """
+    answer = embeddingnames
+    return {'answer':answer}
+
+create_call('embeddingnames', embedding_names, ["GET"])
+
 def model(values):
     """ Set the LLM model """
     this_model = values[0]
@@ -461,6 +479,21 @@ def model(values):
     return {'answer':'Model set to '+this_model}
     
 create_call('model', model, ["GET", "POST"], ['model'])
+
+def embeddings(values):
+    """ Set the Embedding model """
+    this_embedding = values[0]
+    if not this_embedding.isascii():
+        log_error("Embedding name "+this_embedding+" uses non-ascii characters")
+    if not this_embedding in embeddingnames:
+        log_error("Embedding "+this_embedding+" not found in OpenAI's models")
+    globvars['Embedding'] = this_embedding
+    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
+                            temperature=globvars['Temperature'])
+    initialize_chain(True)
+    return {'answer':'Embedding set to '+this_embedding}
+    
+create_call('embeddings', embeddings, ["GET", "POST"], ['embedding'])
 
 def chunk(values):
     """ Set the LLM model """
