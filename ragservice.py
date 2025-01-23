@@ -5,13 +5,13 @@ import logging
 import os
 import sys
 import uuid
-import importlib
 import base64
 import inspect
 import configparser
 import subprocess
 import pprint
 import json
+from dotenv import load_dotenv
 from pathlib import PurePath
 from typing import List
 from urllib.request import urlopen
@@ -27,15 +27,17 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader
+from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.llms.ollama import Ollama
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
+from langchain_azure_ai.embeddings import AzureAIEmbeddingsModel
 from langchain_groq import ChatGroq
 from groq import Groq
 import config
@@ -46,6 +48,8 @@ if len(sys.argv) != 2:
     print("Error: argument missing -> ID")
     sys.exit(os.EX_USAGE)
 rag_project=sys.argv[1]
+
+load_dotenv()
 
 # set working dir to program dir to allow relative paths in configs
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
@@ -78,8 +82,8 @@ def handle_preflight():
 
 def get_modelnames(mode, modeltext, embedding_model=None):
     """ 
-        Load all API keys to environment vairiables.
-        Return possible modelnames and check the chosen one.
+        Load all API keys to environment variables.
+        Return possible model names and check the chosen one.
     """
     modelnames = []
     embeddingnames = []
@@ -91,14 +95,16 @@ def get_modelnames(mode, modeltext, embedding_model=None):
             env = llm+"_API_KEY"
             os.environ[env] = key
 
+    has_model_list = False
     match mode:
         case 'OPENAI':
             client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
+            has_model_list = True
         case 'GROQ':
             client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
             client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
+            has_model_list = True
         case 'OLLAMA':
-            client = None
             result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE).stdout.decode('utf-8')
             namelist = result.strip().split()
             for name in namelist:
@@ -106,8 +112,11 @@ def get_modelnames(mode, modeltext, embedding_model=None):
                 if hit>0:
                     model = name[0:hit]
                     modelnames.append(model)
+        case 'AZURE':
+            modelnames = [rcmodel]
+            embeddingnames = [embedding_model]
 
-    if client is not None:  # Must be made more explicit, Ollama doesn't have a client
+    if has_model_list:  # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
         embeddingnames = sorted([
             str(dict(modelitem)['id']) 
@@ -123,11 +132,11 @@ def get_modelnames(mode, modeltext, embedding_model=None):
         ])
 
     if not modeltext in modelnames:
-        logging.error("Model %s not found in %s models",modeltext, mode)
+        logging.error("Model %s not found in %s models", modeltext, mode)
         sys.exit(os.EX_CONFIG)
 
     if not embedding_model in embeddingnames:
-        logging.error("embedding %s not found in %s models",embedding_model, mode)
+        logging.error("Embedding %s not found in %s models", embedding_model, mode)
         sys.exit(os.EX_CONFIG)
 
     return modelnames, embeddingnames
@@ -159,12 +168,21 @@ globvars['NoChunks']    = 0
 
 modelnames, embeddingnames = get_modelnames(rcllms, rcmodel, rcembedding)
 
-if globvars['USE_LLM'] == "OPENAI":
-    globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
-if globvars['USE_LLM'] == "OLLAMA":
-    globvars['LLM']     = Ollama(model=rcmodel)
-if globvars['USE_LLM'] == "GROQ":
-    globvars['LLM']     = ChatGroq(model=rcmodel)
+match globvars['USE_LLM']:
+    case "OPENAI":
+        globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
+    case "OLLAMA":
+        globvars['LLM']     = Ollama(model=rcmodel)
+    case "GROQ":
+        globvars['LLM']     = ChatGroq(model=rcmodel)
+    case "AZURE":
+        globvars['LLM']     = AzureAIChatCompletionsModel(
+            endpoint=rc.get('LLMS.AZURE','azure_openai_model_endpoint'),
+            credential=config.apikeys['AZURE_OPENAI_APIKEY'],
+            model_name=rcmodel,
+            verbose=True,
+            client_kwargs={ "logging_enable": True }
+        )
 
 if rcmodel not in modelnames:
     print(f"Error: modelname {rcmodel} not known with {rcllms}")
@@ -215,6 +233,12 @@ def embedding_function() -> OpenAIEmbeddings:
     match globvars['USE_LLM']:
         case "OPENAI":
             return OpenAIEmbeddings(model=rcembedding)
+        case "AZURE":
+            return AzureAIEmbeddingsModel(
+                endpoint=rc.get('LLMS.AZURE','azure_openai_embedding_endpoint'),
+                credential=config.apikeys['AZURE_OPENAI_APIKEY'],
+                model_name=rcembedding
+            ) 
         case _:
             return OpenAIEmbeddings()
 
@@ -280,6 +304,17 @@ def initialize_chain(new_vectorstore=False):
         logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
         if len(splits)>0:
             vectorstore.add_documents(splits)
+
+        # Load DOCX's
+        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                                 glob=rc.get('DEFAULT','data_glob_docx'),
+                                 loader_cls=UnstructuredWordDocumentLoader,
+                                 silent_errors=True)
+        docs = loader.load()
+        splits = text_splitter.split_documents(docs)
+        logging.info("Context loaded from DOCX documents, %s splits",str(len(splits)))
+        if len(splits)>0:
+            vectorstore.add_documents(splits)
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
     globvars['VectorStore'] = vectorstore
@@ -329,7 +364,11 @@ def initialize_chain(new_vectorstore=False):
             ]
         )
         
-    question_answer_chain = create_stuff_documents_chain(this_model, qa_prompt)
+    def log_retrieved_documents(retrieved_docs):
+        for doc in retrieved_docs:
+            logging.info("Retrieved document: %s", doc.page_content)
+
+    question_answer_chain = create_stuff_documents_chain(llm=this_model, prompt=qa_prompt)
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
@@ -339,6 +378,7 @@ def initialize_chain(new_vectorstore=False):
         input_messages_key="input",
         history_messages_key="chat_history",
         output_messages_key="answer",
+        callbacks=[log_retrieved_documents]
     )
     logging.info("Chain initialized: %s",globvars['ModelText'])
     return True
@@ -640,6 +680,8 @@ def upload_file(values):
     if PurePath(filename).match(rc.get('DEFAULT','data_glob_txt')):
         found = True
     if PurePath(filename).match(rc.get('DEFAULT','data_glob_pdf')):
+        found = True
+    if PurePath(filename).match(rc.get('DEFAULT','data_glob_docx')):
         found = True
 
     if not found:
