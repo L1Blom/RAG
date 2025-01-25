@@ -27,7 +27,7 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader
+from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader, UnstructuredExcelLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
@@ -40,6 +40,7 @@ from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
 from langchain_azure_ai.embeddings import AzureAIEmbeddingsModel
 from langchain_groq import ChatGroq
 from groq import Groq
+from docx import Document
 import config
 
 # The program needs a ID to be able to read the config
@@ -246,7 +247,7 @@ def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
     this_model = globvars['LLM']
-    text_loader_kwargs={'autodetect_encoding': True}
+    text_loader_kwargs={'autodetect_encoding': True, 'mode': 'elements'}
     collection_name="vectorstore"
 
     if not new_vectorstore and os.path.exists(rc.get('DEFAULT','persistence')+'/chroma.sqlite3'):
@@ -313,6 +314,27 @@ def initialize_chain(new_vectorstore=False):
         docs = loader.load()
         splits = text_splitter.split_documents(docs)
         logging.info("Context loaded from DOCX documents, %s splits",str(len(splits)))
+        if len(splits)>0:
+            vectorstore.add_documents(splits)
+            
+        # Load PPTX's
+        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                                 glob=rc.get('DEFAULT','data_glob_pptx'),
+                                 silent_errors=True)
+        docs = loader.load()
+        splits = text_splitter.split_documents(docs)
+        logging.info("Context loaded from PPTX documents, %s splits",str(len(splits)))
+        if len(splits)>0:
+            vectorstore.add_documents(splits)
+
+        # Load XLSX's
+        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                                 glob=rc.get('DEFAULT','data_glob_xlsx'),
+                                 loader_cls=UnstructuredExcelLoader,
+                                 silent_errors=True)
+        docs = loader.load()
+        splits = text_splitter.split_documents(docs)
+        logging.info("Context loaded from XLSX documents, %s splits",str(len(splits)))
         if len(splits)>0:
             vectorstore.add_documents(splits)
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
@@ -682,6 +704,10 @@ def upload_file(values):
     if PurePath(filename).match(rc.get('DEFAULT','data_glob_pdf')):
         found = True
     if PurePath(filename).match(rc.get('DEFAULT','data_glob_docx')):
+        found = True
+    if PurePath(filename).match(rc.get('DEFAULT','data_glob_xlsx')):
+        found = True
+    if PurePath(filename).match(rc.get('DEFAULT','data_glob_pptx')):
         found = True
 
     if not found:
