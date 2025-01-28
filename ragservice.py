@@ -39,9 +39,11 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
 from langchain_azure_ai.embeddings import AzureAIEmbeddingsModel
 from langchain_groq import ChatGroq
+from langchain_community.vectorstores.utils import filter_complex_metadata
 from groq import Groq
 from docx import Document
 import config
+import time
 
 # The program needs a ID to be able to read the config
 # Use _unittest for activating unittests or your own tests
@@ -147,6 +149,7 @@ logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
 logging.info("Working directory is %s", os.getcwd())
 
 globvars        = context_processor()
+globvars['timestamp'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 rcllms          = globvars['USE_LLM']      = rc.get('LLMS','use_llm')
 rcmodel         = globvars['ModelText']    = rc.get('LLMS.'+rcllms,'modeltext')
 rcembedding     = globvars['Embedding']    = rc.get('LLMS.'+rcllms,'embedding_model')
@@ -243,6 +246,86 @@ def embedding_function() -> OpenAIEmbeddings:
         case _:
             return OpenAIEmbeddings()
 
+def load_files(vectorstore):
+    file_types = {'docx' : [UnstructuredWordDocumentLoader,'elements'],
+                  'pptx' : [UnstructuredPowerPointLoader,'single'],
+                  'xlsx' : [UnstructuredExcelLoader,'single'],
+                  'pdf'  : [PyPDFDirectoryLoader,'elements'],
+                  'txt'  : [TextLoader,'elements']}  
+
+    for ftype in file_types.keys():
+        loader_cls = file_types[ftype][0]
+        mode = file_types[ftype][1]
+        glob = rc.get('DEFAULT','data_glob_'+ftype)  
+
+        logging.info("Loading %s files with glob %s",ftype,glob)
+        splits = None
+        match ftype:
+            case 'txt':
+                if rc.has_option('DEFAULT','LANGUAGE'):
+                    text_splitter = RecursiveCharacterTextSplitter.from_language(
+                        language=Language[rc.get('DEFAULT','language')],
+                        chunk_size=rc.getint('DEFAULT','chunk_size'),
+                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                else:
+                    text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=rc.getint('DEFAULT','chunk_size'),
+                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                text_loader_kwargs={'autodetect_encoding': True}
+
+                loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                            glob=glob,
+                            loader_cls=loader_cls,
+                            silent_errors=True,
+                            loader_kwargs=text_loader_kwargs)
+                docs = loader.load()
+                splits = text_splitter.split_documents(docs)
+                if len(splits) >0:
+                    vectorstore.add_documents(splits.copy())
+                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
+            case 'pdf':
+                text_splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=rc.getint('DEFAULT','chunk_size'),
+                            chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                loader = PyPDFDirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                            glob=glob)
+                splits = loader.load_and_split()
+                if len(splits) >0:
+                    vectorstore.add_documents(splits.copy())
+                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
+            case _:
+                text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=rc.getint('DEFAULT','chunk_size'),
+                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                text_loader_kwargs={'autodetect_encoding': True,
+                                    'mode': mode}
+                loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                            glob=glob,
+                            loader_cls=loader_cls,
+                            silent_errors=True,
+                            loader_kwargs=text_loader_kwargs)
+                docs = loader.load()
+                for doc in docs:
+                    if dict(doc)['metadata']:
+                        mtd = dict(doc)['metadata']
+                        for key in mtd:
+                            if type(mtd[key]) == list:
+                                mtd[key] = ','.join([str(item) for item in mtd[key]])
+                        doc.metadata = mtd
+
+                    split = text_splitter.split_documents([doc])
+                    if splits == None:
+                        splits = split
+                    else:
+                        splits.extend(split)
+                    if len(splits)>40:
+                        vectorstore.add_documents(splits.copy())
+                        logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))
+                        splits = None                               
+                if splits != None:
+                    vectorstore.add_documents(splits.copy())
+                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
+
 def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
@@ -273,70 +356,8 @@ def initialize_chain(new_vectorstore=False):
                              collection_metadata={"hnsw:space": "cosine"},
                              embedding_function=embedding_function())
         # Delete previous stored documents
-        # Load text files
-        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                 glob=rc.get('DEFAULT','data_glob_txt'),
-                                 loader_cls=TextLoader,
-                                 loader_kwargs=text_loader_kwargs)
-        docs = loader.load()
-        logging.info("Context loaded from %s text documents...",str(len(docs)))
 
-        if rc.has_option('DEFAULT','LANGUAGE'):
-            text_splitter = RecursiveCharacterTextSplitter.from_language(
-                language=Language[rc.get('DEFAULT','language')],
-                chunk_size=rc.getint('DEFAULT','chunk_size'),
-                chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
-        else:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=rc.getint('DEFAULT','chunk_size'),
-                chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
-
-        splits = text_splitter.split_documents(docs)
-        logging.info("...resulting in %s splits",len(splits))
-        # Create the vectorstore
-
-        if len(splits)>0:
-            vectorstore.add_documents(documents=splits)
-
-        # Load PDF's
-        loader = PyPDFDirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                      glob=rc.get('DEFAULT','data_glob_pdf'))
-        splits = loader.load_and_split()
-        logging.info("Context loaded from PDF documents, %s splits",str(len(splits)))
-        if len(splits)>0:
-            vectorstore.add_documents(splits)
-
-        # Load DOCX's
-        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                 glob=rc.get('DEFAULT','data_glob_docx'),
-                                 loader_cls=UnstructuredWordDocumentLoader,
-                                 silent_errors=True)
-        docs = loader.load()
-        splits = text_splitter.split_documents(docs)
-        logging.info("Context loaded from DOCX documents, %s splits",str(len(splits)))
-        if len(splits)>0:
-            vectorstore.add_documents(splits)
-            
-        # Load PPTX's
-        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                 glob=rc.get('DEFAULT','data_glob_pptx'),
-                                 silent_errors=True)
-        docs = loader.load()
-        splits = text_splitter.split_documents(docs)
-        logging.info("Context loaded from PPTX documents, %s splits",str(len(splits)))
-        if len(splits)>0:
-            vectorstore.add_documents(splits)
-
-        # Load XLSX's
-        loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
-                                 glob=rc.get('DEFAULT','data_glob_xlsx'),
-                                 loader_cls=UnstructuredExcelLoader,
-                                 silent_errors=True)
-        docs = loader.load()
-        splits = text_splitter.split_documents(docs)
-        logging.info("Context loaded from XLSX documents, %s splits",str(len(splits)))
-        if len(splits)>0:
-            vectorstore.add_documents(splits)
+        load_files(vectorstore)
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
     globvars['VectorStore'] = vectorstore
