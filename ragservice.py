@@ -247,8 +247,8 @@ def embedding_function() -> OpenAIEmbeddings:
             return OpenAIEmbeddings()
 
 def load_files(vectorstore):
-    file_types = {'docx' : [UnstructuredWordDocumentLoader,'elements'],
-                  'pptx' : [UnstructuredPowerPointLoader,'single'],
+    file_types = {'docx' : [UnstructuredWordDocumentLoader,'basic'],
+                  'pptx' : [UnstructuredPowerPointLoader,'by_title'],
                   'xlsx' : [UnstructuredExcelLoader,'single'],
                   'pdf'  : [PyPDFDirectoryLoader,'elements'],
                   'txt'  : [TextLoader,'elements']}  
@@ -297,14 +297,17 @@ def load_files(vectorstore):
                 text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=rc.getint('DEFAULT','chunk_size'),
                         chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
-                text_loader_kwargs={'autodetect_encoding': True,
-                                    'mode': mode}
+                loader_kwargs={'autodetect_encoding': True,
+                                'chunking_strategy': mode}
                 loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                             glob=glob,
                             loader_cls=loader_cls,
                             silent_errors=True,
-                            loader_kwargs=text_loader_kwargs)
+                            loader_kwargs=loader_kwargs)
                 docs = loader.load()
+                print(">>>>>>>>>>>>>>>")
+                print(docs)
+                
                 for doc in docs:
                     if dict(doc)['metadata']:
                         mtd = dict(doc)['metadata']
@@ -312,20 +315,23 @@ def load_files(vectorstore):
                             if type(mtd[key]) == list:
                                 mtd[key] = ','.join([str(item) for item in mtd[key]])
                         doc.metadata = mtd
-
-                    split = text_splitter.split_documents([doc])
-                    if splits == None:
-                        splits = split
-                    else:
-                        splits.extend(split)
-                    if len(splits)>40:
-                        vectorstore.add_documents(splits.copy())
-                        logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))
-                        splits = None                               
-                if splits != None:
-                    vectorstore.add_documents(splits.copy())
-                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
-
+#                    split = text_splitter.split_documents([doc])
+#                    print (">>>>>>>>>>>>>>>>>>> Split")
+#                    print(split)
+#                    if splits == None:
+#                        splits = split
+#                    else:
+#                        splits.extend(split)
+#                    if len(splits)>40:
+#                        vectorstore.add_documents(splits.copy())
+#                        logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))
+#                        splits = None                               
+#                if splits != None:
+#                    vectorstore.add_documents(splits.copy())
+#                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              #/
+                if len(docs) >0:
+                    vectorstore.add_documents(docs)
+                    logging.info("Context loaded from %s documents, %s docs",ftype, str(len(docs)))              
 def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
