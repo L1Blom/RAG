@@ -246,14 +246,16 @@ def embedding_function() -> OpenAIEmbeddings:
         case _:
             return OpenAIEmbeddings()
 
-def load_files(vectorstore):
-    file_types = {'docx' : [UnstructuredWordDocumentLoader,'basic'],
+def load_files(vectorstore, file_type):
+    file_types = {'docx' : [UnstructuredWordDocumentLoader,'single'],
                   'pptx' : [UnstructuredPowerPointLoader,'by_title'],
                   'xlsx' : [UnstructuredExcelLoader,'single'],
                   'pdf'  : [PyPDFDirectoryLoader,'elements'],
                   'txt'  : [TextLoader,'elements']}  
 
     for ftype in file_types.keys():
+        if file_type != 'all' and ftype != file_type:
+                continue 
         loader_cls = file_types[ftype][0]
         mode = file_types[ftype][1]
         glob = rc.get('DEFAULT','data_glob_'+ftype)  
@@ -281,7 +283,7 @@ def load_files(vectorstore):
                 docs = loader.load()
                 splits = text_splitter.split_documents(docs)
                 if len(splits) >0:
-                    vectorstore.add_documents(splits.copy())
+                    vectorstore.add_documents(splits)
                     logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
             case 'pdf':
                 text_splitter = RecursiveCharacterTextSplitter(
@@ -291,9 +293,9 @@ def load_files(vectorstore):
                             glob=glob)
                 splits = loader.load_and_split()
                 if len(splits) >0:
-                    vectorstore.add_documents(splits.copy())
+                    vectorstore.add_documents(splits)
                     logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
-            case _:
+            case 'pptx':
                 text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=rc.getint('DEFAULT','chunk_size'),
                         chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
@@ -305,9 +307,6 @@ def load_files(vectorstore):
                             silent_errors=True,
                             loader_kwargs=loader_kwargs)
                 docs = loader.load()
-                print(">>>>>>>>>>>>>>>")
-                print(docs)
-                
                 for doc in docs:
                     if dict(doc)['metadata']:
                         mtd = dict(doc)['metadata']
@@ -315,23 +314,36 @@ def load_files(vectorstore):
                             if type(mtd[key]) == list:
                                 mtd[key] = ','.join([str(item) for item in mtd[key]])
                         doc.metadata = mtd
-#                    split = text_splitter.split_documents([doc])
-#                    print (">>>>>>>>>>>>>>>>>>> Split")
-#                    print(split)
-#                    if splits == None:
-#                        splits = split
-#                    else:
-#                        splits.extend(split)
-#                    if len(splits)>40:
-#                        vectorstore.add_documents(splits.copy())
-#                        logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))
-#                        splits = None                               
-#                if splits != None:
-#                    vectorstore.add_documents(splits.copy())
-#                    logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              #/
                 if len(docs) >0:
                     vectorstore.add_documents(docs)
                     logging.info("Context loaded from %s documents, %s docs",ftype, str(len(docs)))              
+            case _:
+                text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=rc.getint('DEFAULT','chunk_size'),
+                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                loader_kwargs={'autodetect_encoding': True, 'mode': mode}
+                loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
+                            glob=glob,
+                            loader_cls=loader_cls,
+                            silent_errors=False,    
+                            loader_kwargs=loader_kwargs)
+                docs = loader.load()
+                print(docs)
+                if len(docs) >0:
+                    if docs[0].page_content == '':
+                        logging.error("No content in %s",docs[0].metadata['source'])    
+                    else:
+                        for doc in docs:
+                            if dict(doc)['metadata']:
+                                mtd = dict(doc)['metadata']
+                                for key in mtd:
+                                    if type(mtd[key]) == list:
+                                        mtd[key] = ','.join([str(item) for item in mtd[key]])
+                                doc.metadata = mtd
+                        vectorstore.add_documents(docs)
+                        logging.info("Context loaded from %s documents, %s docs",ftype, str(len(docs)))              
+
+
 def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
@@ -363,7 +375,7 @@ def initialize_chain(new_vectorstore=False):
                              embedding_function=embedding_function())
         # Delete previous stored documents
 
-        load_files(vectorstore)
+        load_files(vectorstore, "all")
         logging.info("Stored %s chunks into vectorstore",len(vectorstore.get()['ids']))
 
     globvars['VectorStore'] = vectorstore
@@ -745,7 +757,7 @@ def upload_file(values):
     logging.info("Saving %s on: %s",filename,filepath)
     file.save(filepath)
     logging.info("File %s saved on: %s",filename,filepath)
-    initialize_chain(True)
+    load_files(globvars['VectorStore'], filename.split('.')[-1])
     return {'answer': 'Upload of '+filename+' completed'}
 
 create_call('upload', upload_file, ["POST"])
