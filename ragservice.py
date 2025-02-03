@@ -149,6 +149,7 @@ logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
 logging.info("Working directory is %s", os.getcwd())
 
 globvars        = context_processor()
+globvars['Project']    = rag_project
 globvars['timestamp'] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 rcllms          = globvars['USE_LLM']      = rc.get('LLMS','use_llm')
 rcmodel         = globvars['ModelText']    = rc.get('LLMS.'+rcllms,'modeltext')
@@ -758,7 +759,7 @@ def upload_file(values):
     file.save(filepath)
     logging.info("File %s saved on: %s",filename,filepath)
     load_files(globvars['VectorStore'], filename.split('.')[-1])
-    return {'answer': 'Upload of '+filename+' completed'}
+    return {'answer': 'Upload completed'}
 
 create_call('upload', upload_file, ["POST"])
     
