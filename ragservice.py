@@ -83,6 +83,8 @@ def handle_preflight():
         res.headers['X-Content-Type-Options'] = '*'
         return res
 
+
+
 def get_modelnames(mode, modeltext, embedding_model=None):
     """ 
         Load all API keys to environment variables.
