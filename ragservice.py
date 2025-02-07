@@ -63,7 +63,14 @@ base_dir = os.path.abspath(os.path.dirname(__file__)) + '/'
 
 # Read the constants from a config file
 rc = configparser.ConfigParser()
-rc.read(base_dir + "constants/constants_"+rag_project+".ini")
+
+try: 
+    constantsfile = base_dir + "constants/constants_"+rag_project+".ini"
+    rc.read(constantsfile)
+    rcconfighost = "http://localhost:"+rc.get('DEFAULT','config_server_port')
+except Exception as e:
+    print("No constants file found: " + constantsfile)
+    sys.exit(os.EX_USAGE)
 
 # max 16Mb for uploads
 app = Flask(__name__)
@@ -771,7 +778,18 @@ def log_unhandled(e):
         print(repr(e))
         
 if __name__ == '__main__':
-    if initialize_chain():
-        app.run(port=rc.get('FLASK','port'), debug=rc.getboolean('FLASK','debug'), host="0.0.0.0")
-    else:
-        logging.error("Initialization of chain failed")
+    # Call an API to get the port number
+    host = 'localhost'
+    port = 5200
+    try:
+        response = urlopen(rcconfighost + "/get?project=" + rag_project)
+        configs = json.loads(response.read().decode('utf-8'))
+        host = configs['host']
+        port = int(configs['port'])
+        if initialize_chain():
+            app.run(port=port, debug=rc.getboolean('FLASK', 'debug'), host="0.0.0.0")
+        else:
+            raise Exception("Initialization of chain failed")
+    except Exception as e:
+        logging.error("Failed to get port number from API: %s", e)
+    

@@ -7,7 +7,7 @@ from flask_cors import CORS, cross_origin
 app = Flask(__name__)
 CORS(app)
 
-config_file_path = '/home/leen/projects/rag/config.json'
+config_file_path = './config.json'
 
 def load_config():
     if os.path.exists(config_file_path):
@@ -26,11 +26,15 @@ def set():
         project = request.form['project']
         if not project:
             raise ValueError("Project code must not be empty")
-        api = request.form['api']
-        if not api:
-            raise ValueError("API host must not be empty")
+        host = request.form['host']
+        if not host:
+            raise ValueError("Host must not be empty")
+        port = request.form['port']
+        if not port:
+            raise ValueError("Port must not be empty")
         config = load_config()
-        config[project] = api
+        config[project] = { 'host':host, 'port':port }
+        
         save_config(config)
         return make_response({'message': 'Project code set successfully'}, 200)
     except Exception as e:
@@ -43,10 +47,13 @@ def get():
     try:
         project = request.args['project']
         config = load_config()
-        api = config[project]
+        configs = config[project]
+        
         return make_response(
             {'project': project,
-             'api': api}, 200)
+             'host': configs['host'],
+             'port': configs['port'],
+             }, 200)
     except Exception as e:
         logging.error("Error retrieving project code: %s", e)
         return make_response({'error': str(e)}, 400)

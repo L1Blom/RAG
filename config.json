@@ -1,1 +1,1 @@
-{"centric": "http://localhost:5000", "azure": "http://localhost:5100"}
+{"azure": {"host": "localhost", "port": "5000"}}

@@ -2,6 +2,7 @@ __pycache__
 .vscode
 afk.py
 config.py
+config.json
 constants/constants_[^_]*.ini
 count.py
 data/[!_]*
