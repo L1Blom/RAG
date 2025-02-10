@@ -1,1 +1,1 @@
-{"azure": {"host": "localhost", "port": "5000"}}
+{"centric": {"host": "localhost", "port": "5100", "description": "Algemene testomgeving"}, "azure": {"host": "localhost", "port": "5000", "description": "Azure documenten test"}, "gerco": {"host": "localhost", "port": "5200", "description": "Huwelijk Gerco en Anne-Wil"}}

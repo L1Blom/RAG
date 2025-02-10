@@ -67,7 +67,7 @@ rc = configparser.ConfigParser()
 try: 
     constantsfile = base_dir + "constants/constants_"+rag_project+".ini"
     rc.read(constantsfile)
-    rcconfighost = "http://localhost:"+rc.get('DEFAULT','config_server_port')
+    rcconfighost = rc.get('DEFAULT','config_server')
 except Exception as e:
     print("No constants file found: " + constantsfile)
     sys.exit(os.EX_USAGE)
@@ -201,6 +201,14 @@ match globvars['USE_LLM']:
 if rcmodel not in modelnames:
     print(f"Error: modelname {rcmodel} not known with {rcllms}")
     sys.exit(os.EX_CONFIG)
+
+@app.route('/ping', methods=['GET'])
+@cross_origin()
+def ping():
+    """ Return the start time """
+    timestamp = globvars['timestamp']
+    return {'answer':timestamp}
+
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -648,6 +656,7 @@ def clear(values):
 
 create_call('clear', clear, ["GET", "POST"])
 
+
 def cache(values):
     """ Return cache contents """
     content = ""
@@ -779,6 +788,7 @@ def log_unhandled(e):
         
 if __name__ == '__main__':
     # Call an API to get the port number
+    # fall back if config server is not available
     host = 'localhost'
     port = 5200
     try:
@@ -786,10 +796,12 @@ if __name__ == '__main__':
         configs = json.loads(response.read().decode('utf-8'))
         host = configs['host']
         port = int(configs['port'])
-        if initialize_chain():
-            app.run(port=port, debug=rc.getboolean('FLASK', 'debug'), host="0.0.0.0")
-        else:
-            raise Exception("Initialization of chain failed")
+        logging.info("Port found at config server: %s", str(port))
     except Exception as e:
         logging.error("Failed to get port number from API: %s", e)
-    
+        logging.error("Defaulting to port nr: %s", str(port))
+    if initialize_chain():
+        app.run(port=port, debug=rc.getboolean('FLASK', 'debug'), host="0.0.0.0")
+    else:
+        raise Exception("Initialization of chain failed")
+
