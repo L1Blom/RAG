@@ -206,9 +206,9 @@ if rcmodel not in modelnames:
 @cross_origin()
 def ping():
     """ Return the start time """
+    pid = os.getpid()
     timestamp = globvars['timestamp']
-    return {'answer':timestamp}
-
+    return {'answer':{'timestamp': timestamp, 'pid': pid}}
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
