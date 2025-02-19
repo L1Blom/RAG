@@ -1,13 +1,15 @@
+import configparser
 import os
 import json
 import logging
 import subprocess
+import sys
 from flask import Flask, request, make_response
 from flask_cors import CORS, cross_origin
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
 
-logging.basicConfig(level='ERROR')
+logging.basicConfig(level=logging.ERROR)
 
 app = Flask(__name__)
 CORS(app)
@@ -16,6 +18,8 @@ CORS(app)
 def context_processor():
     """ Store the globals in a Flask way """
     return dict()
+
+# Read the constants from a config file
 
 globvars = context_processor()
 globvars['processes'] = {}       
@@ -38,6 +42,30 @@ def set_param(param):
         raise ValueError(f"Parameter {param} must not be empty")
     return output
 
+def set_env(project):
+    rc = configparser.ConfigParser()
+    constantsfile = "constants/constants_"+project+".ini"
+    if os.path.exists(constantsfile):
+        rc.read(constantsfile)
+    else: 
+        rc.read("constants/constants.ini")  
+
+    config = load_config()
+    if project in config:
+        rcdef                   = rc['DEFAULT']
+        rcdef['id']             = project
+        rcdef['data_dir']       = 'data/'+project
+        rcdef['persistence']    = rcdef['data_dir']+'/vectorstore'
+        rcflask                 = rc['FLASK']
+        rcflask['port']         = config[project]['port']
+        rcllm                   = rc['LLMS']
+        rcllm['use_llm']        = config[project]['provider']
+        newconstants = "constants/constants_"+project+".ini"
+        with open(newconstants,'w') as nc:
+            rc.write(nc)
+    else:
+        raise Exception("This project is not found: "+project)
+    
 @app.route('/start', methods=['GET'])
 @cross_origin()
 def start():
@@ -55,12 +83,13 @@ def stop():
 @app.route('/set', methods=['POST'])
 @cross_origin()
 def set():
-    my_input = request.json
-    my_keys  = ['project','port','description']
-    project  = my_input['project']
+    my_input  = request.json
+    my_keys   = ['project','port','description','provider']
+    project   = my_input['project']
+    port      = my_input['port']
+    provider  = my_input['provider']
     if 'originalProject' in my_input:
         original_project = my_input['originalProject']
-    print(my_input)
     try:
         config = load_config()
         update = {}
@@ -74,6 +103,7 @@ def set():
             if original_project != project:
                 config.pop(original_project)
         save_config(config)
+        set_env(project)
         return make_response({'message': 'Project code set successfully'}, 200)
     except Exception as e:
         logging.error("Error setting project code: %s", e)
@@ -92,8 +122,8 @@ def get():
             raise ValueError("Project not found")
         return make_response(
             {'project': project,
-             'host': configs['host'],
              'port': configs['port'],
+             'provider': configs['provider'],
              'description': configs['description']
              }, 200)
     except Exception as e:

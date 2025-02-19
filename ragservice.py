@@ -346,7 +346,6 @@ def load_files(vectorstore, file_type):
                             silent_errors=False,    
                             loader_kwargs=loader_kwargs)
                 docs = loader.load()
-                print(docs)
                 if len(docs) >0:
                     if docs[0].page_content == '':
                         logging.error("No content in %s",docs[0].metadata['source'])    
@@ -794,7 +793,6 @@ if __name__ == '__main__':
     try:
         response = urlopen(rcconfighost + "/get?project=" + rag_project)
         configs = json.loads(response.read().decode('utf-8'))
-        host = configs['host']
         port = int(configs['port'])
         logging.info("Port found at config server: %s", str(port))
     except Exception as e:
