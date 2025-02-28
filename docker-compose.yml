@@ -1,0 +1,15 @@
+services:
+  configservice:
+    build: .
+    ports:
+      - "5000-5100:5000-5100"  # Expose all ports from 5000 to 6000
+      - "8000-8000:8000-8000"  # Expose port 8000
+    volumes:
+      - data:/app/data
+      - ./constants:/app/constants
+      - ./config.json:/app/config.json  # Mount config.json as a volume
+    environment:
+      - FLASK_ENV=production
+
+volumes:
+  data:

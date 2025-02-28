@@ -8,6 +8,8 @@ from flask import Flask, request, make_response
 from flask_cors import CORS, cross_origin
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
+from urllib.parse import urlparse
+
 
 logging.basicConfig(level=logging.ERROR)
 
@@ -55,6 +57,7 @@ def set_env(project):
         rcdef                   = rc['DEFAULT']
         rcdef['id']             = project
         rcdef['data_dir']       = 'data/'+project
+        os.makedirs(rcdef['data_dir'], exist_ok=True)  # Ensure data directory exists
         rcdef['persistence']    = rcdef['data_dir']+'/vectorstore'
         rcflask                 = rc['FLASK']
         rcflask['port']         = config[project]['port']
@@ -65,12 +68,28 @@ def set_env(project):
             rc.write(nc)
     else:
         raise Exception("This project is not found: "+project)
-    
+
+def load_configurations():
+    rc = configparser.ConfigParser()
+    config = load_config()
+    for project in config:
+        constantsfile = "constants/constants_"+project+".ini"
+        if os.path.exists(constantsfile):
+            rc.read(constantsfile)
+        else:
+            logging.error("Error: constants file not found for project "+project)
+            continue
+        config[project]['status'] = 'undefined'
+        save_config(config)
+        globvars['processes'][project] = subprocess.Popen(['python','ragservice.py',project], env=os.environ)
+        logging.info(f"Project {project} started")  
+
 @app.route('/start', methods=['GET'])
 @cross_origin()
 def start():
     project = request.args.get('project')
-    globvars['processes'][project] = subprocess.Popen(['python','ragservice.py',project])
+    globvars['processes'][project] = subprocess.Popen(['python','ragservice.py',project], env=os.environ)
+    logging.info(f"Project {project} started")
     return make_response({'message':'Project started'}, 200)    
 
 @app.route('/stop', methods=['GET'])
@@ -160,9 +179,14 @@ def delete():
 
 def check_services():
     config = load_config()
+    in_docker = os.environ.get('IN_DOCKER', False)
+    hostname = os.environ.get('REACT_APP_RAG_SERVER') or 'localhost'
+            
     for project, details in config.items():
+        host = 'http://'+hostname+':'+details['port']
+        print(host)        
         try:
-            response = requests.get(f"http://localhost:{details['port']}/ping")
+            response = requests.get(f"{host}/ping")
             if response.status_code == 200:
                 resp = response.json()['answer']
                 config[project].update({
@@ -191,6 +215,7 @@ scheduler.start()
 
 if __name__ == '__main__':
     try:
+        load_configurations()
         app.run(port=8000, debug=False, host="0.0.0.0")
     except (KeyboardInterrupt, SystemExit):
         scheduler.shutdown()

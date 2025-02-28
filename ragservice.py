@@ -39,10 +39,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
 from langchain_azure_ai.embeddings import AzureAIEmbeddingsModel
 from langchain_groq import ChatGroq
-from langchain_community.vectorstores.utils import filter_complex_metadata
 from groq import Groq
-from docx import Document
-import config
 import time
 
 # The program needs a ID to be able to read the config
@@ -52,7 +49,22 @@ if len(sys.argv) != 2:
     sys.exit(os.EX_USAGE)
 rag_project=sys.argv[1]
 
-load_dotenv()
+# Read the secrets from the secrets directory
+def read_secret(secret_path):
+    with open(secret_path, 'r') as file:
+        return file.read().strip()
+
+# Load the environment variables from the env directory
+if os.path.exists("env/config.env"):
+    logging.info("Loading environment variables from env/config.env")
+    load_dotenv("env/config.env")
+# Load the secrets from the secrets directory
+if os.path.exists("/run/secrets"):
+    logging.info("Loading secrets from /run/secrets")
+    os.environ['AZURE_OPENAI_APIKEY'] = read_secret('/run/secrets/azure_openai_apikey')
+    os.environ['OPENAI_APIKEY'] = read_secret('/run/secrets/openai_apikey')
+    os.environ['LLAMA3_APIKEY'] = read_secret('/run/secrets/llama3_apikey')
+    os.environ['GROQ_APIKEY'] = read_secret('/run/secrets/groq_apikey')
 
 # set working dir to program dir to allow relative paths in configs
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
@@ -100,21 +112,15 @@ def get_modelnames(mode, modeltext, embedding_model=None):
     modelnames = []
     embeddingnames = []
     
-    for llm in rc.get('LLMS','llms').split(','):
-        option = llm+"_APIKEY"
-        if option in config.apikeys:
-            key = config.apikeys[option]
-            env = llm+"_API_KEY"
-            os.environ[env] = key
 
     has_model_list = False
     match mode:
         case 'OPENAI':
-            client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
+            client = openai.OpenAI(api_key = os.environ.get('OPENAI_APIKEY')) 
             has_model_list = True
         case 'GROQ':
-            client = openai.OpenAI(api_key = os.getenv('OPENAI_API_KEY')) 
-            client = Groq(api_key = os.environ.get("GROQ_API_KEY"))
+#            client = openai.OpenAI(api_key = os.environ.get('OPENAI_APIKEY')) 
+            client = Groq(api_key = os.environ.get("GROQ_APIKEY"))
             has_model_list = True
         case 'OLLAMA':
             result = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE).stdout.decode('utf-8')
@@ -184,15 +190,22 @@ modelnames, embeddingnames = get_modelnames(rcllms, rcmodel, rcembedding)
 
 match globvars['USE_LLM']:
     case "OPENAI":
-        globvars['LLM']     = ChatOpenAI(model=rcmodel,temperature=rctemp)
+        my_api_key=os.environ.get('OPENAI_APIKEY')
+        globvars['LLM']     = ChatOpenAI(api_key=my_api_key,model=rcmodel,temperature=rctemp)
     case "OLLAMA":
+        my_api_key=os.environ.get('OLLAMA_APIKEY')
         globvars['LLM']     = Ollama(model=rcmodel)
     case "GROQ":
-        globvars['LLM']     = ChatGroq(model=rcmodel)
+        my_api_key=os.environ.get('GROQ_APIKEY')
+        globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel)
     case "AZURE":
+        my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
+        if my_api_key is None:
+            logging.error("Azure API key not found")
+            sys.exit(os.EX_CONFIG)  
         globvars['LLM']     = AzureAIChatCompletionsModel(
             endpoint=rc.get('LLMS.AZURE','azure_openai_model_endpoint'),
-            credential=config.apikeys['AZURE_OPENAI_APIKEY'],
+            credential=my_api_key,
             model_name=rcmodel,
             verbose=True,
             client_kwargs={ "logging_enable": True }
@@ -254,11 +267,16 @@ def embedding_function() -> OpenAIEmbeddings:
     """ Return an Embedding"""
     match globvars['USE_LLM']:
         case "OPENAI":
-            return OpenAIEmbeddings(model=rcembedding)
+            my_api_key=os.environ.get('OPENAI_APIKEY')
+            return OpenAIEmbeddings(api_key=my_api_key,model=rcembedding)
         case "AZURE":
+            my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
+            if my_api_key is None:
+                logging.error("Azure API key not found")
+                sys.exit(os.EX_CONFIG)      
             return AzureAIEmbeddingsModel(
                 endpoint=rc.get('LLMS.AZURE','azure_openai_embedding_endpoint'),
-                credential=config.apikeys['AZURE_OPENAI_APIKEY'],
+                credential=my_api_key,
                 model_name=rcembedding
             ) 
         case _:
