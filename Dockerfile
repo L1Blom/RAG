@@ -15,6 +15,8 @@ RUN . venv/bin/activate && pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
+# Install python-pptx
+RUN ./nltk.sh
 
 # Expose the port the app runs on
 EXPOSE 8000

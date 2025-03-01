@@ -188,28 +188,32 @@ globvars['NoChunks']    = 0
 
 modelnames, embeddingnames = get_modelnames(rcllms, rcmodel, rcembedding)
 
-match globvars['USE_LLM']:
-    case "OPENAI":
-        my_api_key=os.environ.get('OPENAI_APIKEY')
-        globvars['LLM']     = ChatOpenAI(api_key=my_api_key,model=rcmodel,temperature=rctemp)
-    case "OLLAMA":
-        my_api_key=os.environ.get('OLLAMA_APIKEY')
-        globvars['LLM']     = Ollama(model=rcmodel)
-    case "GROQ":
-        my_api_key=os.environ.get('GROQ_APIKEY')
-        globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel)
-    case "AZURE":
-        my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
-        if my_api_key is None:
-            logging.error("Azure API key not found")
-            sys.exit(os.EX_CONFIG)  
-        globvars['LLM']     = AzureAIChatCompletionsModel(
-            endpoint=rc.get('LLMS.AZURE','azure_openai_model_endpoint'),
-            credential=my_api_key,
-            model_name=rcmodel,
-            verbose=True,
-            client_kwargs={ "logging_enable": True }
-        )
+def set_chat_model(temp=rctemp):
+    match globvars['USE_LLM']:
+        case "OPENAI":
+            my_api_key=os.environ.get('OPENAI_APIKEY')
+            globvars['LLM']     = ChatOpenAI(api_key=my_api_key,model=rcmodel,temperature=temp)
+        case "OLLAMA":
+            my_api_key=os.environ.get('OLLAMA_APIKEY')
+            globvars['LLM']     = Ollama(model=rcmodel)
+        case "GROQ":
+            my_api_key=os.environ.get('GROQ_APIKEY')
+            globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel,temp=temp)
+        case "AZURE":
+            my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
+            if my_api_key is None:
+                logging.error("Azure API key not found")
+                sys.exit(os.EX_CONFIG)  
+            globvars['LLM']     = AzureAIChatCompletionsModel(
+                endpoint=rc.get('LLMS.AZURE','azure_openai_model_endpoint'),
+                credential=my_api_key,
+                temperature=temp,
+                model_name=rcmodel,
+                verbose=True,
+                client_kwargs={ "logging_enable": True }
+            )
+
+set_chat_model(rctemp)
 
 if rcmodel not in modelnames:
     print(f"Error: modelname {rcmodel} not known with {rcllms}")
@@ -383,7 +387,6 @@ def initialize_chain(new_vectorstore=False):
     """ initialize the chain to access the LLM """
 
     this_model = globvars['LLM']
-    text_loader_kwargs={'autodetect_encoding': True, 'mode': 'elements'}
     collection_name="vectorstore"
 
     if not new_vectorstore and os.path.exists(rc.get('DEFAULT','persistence')+'/chroma.sqlite3'):
@@ -609,8 +612,7 @@ def model(values):
     if not this_model in modelnames:
         log_error("Model "+this_model+" not found in OpenAI's models")
     globvars['ModelText'] = this_model
-    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
-                            temperature=globvars['Temperature'])
+    set_chat_model(globvars['Temperature'])
     initialize_chain(True)
     return {'answer':'Model set to '+this_model}
     
@@ -624,8 +626,7 @@ def embeddings(values):
     if not this_embedding in embeddingnames:
         log_error("Embedding "+this_embedding+" not found in OpenAI's models")
     globvars['Embedding'] = this_embedding
-    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
-                            temperature=globvars['Temperature'])
+    set_chat_model(globvars['Temperature'])
     initialize_chain(True)
     return {'answer':'Embedding set to '+this_embedding}
     
@@ -652,8 +653,7 @@ def temp(values):
     if temperature < 0.0 or temperature > 2.0:
         log_error("Temperature "+str(temperature)+" not between 0.0 and 2.0")
     globvars['Temperature'] = temperature
-    globvars['LLM'] = ChatOpenAI(model=globvars['ModelText'],
-                        temperature=globvars['Temperature'])
+    set_chat_model(temperature) 
     initialize_chain(True)
     return {'answer':'Temperature set to '+str(temperature)}
 
@@ -748,7 +748,8 @@ def process_image(values):
     image_url = quote(my_url, safe='/:?=&')
     logging.info("Processing image: %s, with prompt: %s", image_url, text)
     bimage = encode_image(image_url)
-    chain = ChatOpenAI(model=globvars['ModelText'],
+    chain = ChatOpenAI(api_key=os.environ.get('OPENAI_APIKEY'),
+                       model=globvars['ModelText'],
                         temperature=globvars['Temperature'])
     msg = chain.invoke(
         [
