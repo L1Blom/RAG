@@ -9,9 +9,10 @@ from flask_cors import CORS, cross_origin
 from apscheduler.schedulers.background import BackgroundScheduler
 import requests
 from urllib.parse import urlparse
+import threading
 
-
-logging.basicConfig(level=logging.ERROR)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 CORS(app)
@@ -57,6 +58,7 @@ def set_env(project):
         rcdef                   = rc['DEFAULT']
         rcdef['id']             = project
         rcdef['data_dir']       = 'data/'+project
+        rcdef['html']           = rcdef['data_dir']
         os.makedirs(rcdef['data_dir'], exist_ok=True)  # Ensure data directory exists
         rcdef['persistence']    = rcdef['data_dir']+'/vectorstore'
         rcflask                 = rc['FLASK']
@@ -69,6 +71,13 @@ def set_env(project):
     else:
         raise Exception("This project is not found: "+project)
 
+def read_process_output(process):
+    def target():
+        for line in iter(process.stdout.readline, b''):
+            print(line.decode(), end='')
+    thread = threading.Thread(target=target)
+    thread.start()
+
 def load_configurations():
     rc = configparser.ConfigParser()
     config = load_config()
@@ -80,15 +89,30 @@ def load_configurations():
             logging.error("Error: constants file not found for project "+project)
             continue
         config[project]['status'] = 'undefined'
+        llms = rc['LLMS']['use_llm']
+        config[project]['llm'] = rc['LLMS.'+llms]['modeltext']
         save_config(config)
-        globvars['processes'][project] = subprocess.Popen(['python','ragservice.py',project], env=os.environ)
+        globvars['processes'][project] = subprocess.Popen(
+            ['python', 'ragservice.py', project], 
+            env=os.environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=0)
+        read_process_output(globvars['processes'][project])
         logging.info(f"Project {project} started")  
+
 
 @app.route('/start', methods=['GET'])
 @cross_origin()
 def start():
     project = request.args.get('project')
-    globvars['processes'][project] = subprocess.Popen(['python','ragservice.py',project], env=os.environ)
+    globvars['processes'][project] = subprocess.Popen(
+        ['python', 'ragservice.py', project], 
+        env=os.environ,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0)
+    read_process_output(globvars['processes'][project])
     logging.info(f"Project {project} started")
     return make_response({'message':'Project started'}, 200)    
 
@@ -103,10 +127,9 @@ def stop():
 @cross_origin()
 def set():
     my_input  = request.json
-    my_keys   = ['project','port','description','provider']
+    print(my_input)
+    my_keys   = ['project','port','description','provider','llm']  
     project   = my_input['project']
-    port      = my_input['port']
-    provider  = my_input['provider']
     if 'originalProject' in my_input:
         original_project = my_input['originalProject']
     try:
@@ -143,6 +166,7 @@ def get():
             {'project': project,
              'port': configs['port'],
              'provider': configs['provider'],
+             'llm': configs['llm'],
              'description': configs['description']
              }, 200)
     except Exception as e:
@@ -184,7 +208,6 @@ def check_services():
             
     for project, details in config.items():
         host = 'http://'+hostname+':'+details['port']
-        print(host)        
         try:
             response = requests.get(f"{host}/ping")
             if response.status_code == 200:
@@ -192,7 +215,7 @@ def check_services():
                 config[project].update({
                     'status' : 'up',
                     'timestamp': resp['timestamp'],
-                    'pid': resp['pid']
+                    'llm': resp['llm']
                 })
                 #logging.info(f"Service {project} is up")
             else:

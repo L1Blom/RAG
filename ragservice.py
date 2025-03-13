@@ -102,8 +102,6 @@ def handle_preflight():
         res.headers['X-Content-Type-Options'] = '*'
         return res
 
-
-
 def get_modelnames(mode, modeltext, embedding_model=None):
     """ 
         Load all API keys to environment variables.
@@ -111,7 +109,8 @@ def get_modelnames(mode, modeltext, embedding_model=None):
     """
     modelnames = []
     embeddingnames = []
-    
+    modelnames_AI = []
+    modelnames_OPENAI = []
 
     has_model_list = False
     match mode:
@@ -131,9 +130,14 @@ def get_modelnames(mode, modeltext, embedding_model=None):
                     model = name[0:hit]
                     modelnames.append(model)
         case 'AZURE':
-            modelnames = [rcmodel]
-            embeddingnames = [embedding_model]
-
+            modelnames_AI = rc.get('LLMS.AZURE','models_ai').split(',')
+            modelnames_OPENAI = rc.get('LLMS.AZURE','models_openai').split(',') 
+            modelnames = modelnames_AI + modelnames_OPENAI
+            embeddingnames = rc.get('LLMS.AZURE','embeddings').split(',')
+        case _: 
+            logging.error("Unknown LLM: %s", mode)
+            sys.exit(os.EX_CONFIG)
+            
     if has_model_list:  # Must be made more explicit, Ollama doesn't have a client
         models = client.models.list().data
         embeddingnames = sorted([
@@ -157,11 +161,30 @@ def get_modelnames(mode, modeltext, embedding_model=None):
         logging.error("Embedding %s not found in %s models", embedding_model, mode)
         sys.exit(os.EX_CONFIG)
 
-    return modelnames, embeddingnames
+    return modelnames, embeddingnames, modelnames_AI, modelnames_OPENAI
 
-# Configureer logging
-logging.basicConfig(level=rc.get('DEFAULT','logging_level'))
+# Configure logging
+rcloglevel = rc.get('DEFAULT','logging_level')
+log_level = logging.INFO  # Default to INFO if the level is not recognized
+match rcloglevel:
+    case 'DEBUG':
+        log_level = logging.DEBUG
+    case 'INFO':
+        log_level = logging.INFO
+    case 'WARNING':
+        log_level = logging.WARNING
+    case 'ERROR':
+        log_level = logging.ERROR
+    case 'CRITICAL':
+        log_level = logging.CRITICAL
+
+logging.basicConfig(level=log_level)
+logging.getLogger().setLevel(log_level)
+logging.info("Starting RAG service")
+logging.info("Project is %s", rag_project)
 logging.info("Working directory is %s", os.getcwd())
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 globvars        = context_processor()
 globvars['Project']    = rag_project
@@ -185,8 +208,29 @@ globvars['Store']       = {}
 globvars['Session']     = uuid.uuid4()
 globvars['VectorStore'] = None
 globvars['NoChunks']    = 0
+globvars['Prompt']      = rcsysprompt2
 
-modelnames, embeddingnames = get_modelnames(rcllms, rcmodel, rcembedding)
+modelnames, embeddingnames, modelnames_AI, modelnames_OPENAI = get_modelnames(rcllms, rcmodel, rcembedding)
+
+def get_azure_settings():
+    """ Get the Azure settings """
+    api_key = None
+    embedding_api_key = None
+    model_endpoint = None
+    embedding_endpoint = None
+    if rcmodel in modelnames_AI:
+        api_key=os.environ.get('AZURE_AI_APIKEY')   
+        model_endpoint = rc.get('LLMS.AZURE','azure_ai_model_endpoint')
+    if rcmodel in modelnames_OPENAI:
+        api_key=os.environ.get('AZURE_OPENAI_APIKEY')   
+        model_endpoint = rc.get('LLMS.AZURE','azure_openai_model_endpoint')
+    if rcembedding in embeddingnames: 
+        embedding_api_key=os.environ.get('AZURE_OPENAI_APIKEY')  
+        embedding_endpoint = rc.get('LLMS.AZURE','azure_openai_embedding_endpoint')
+    if api_key is None or model_endpoint is None:
+        logging.error("Azure API key or endpoint not found")
+        sys.exit(os.EX_CONFIG)
+    return api_key, model_endpoint, embedding_api_key, embedding_endpoint
 
 def set_chat_model(temp=rctemp):
     match globvars['USE_LLM']:
@@ -200,12 +244,9 @@ def set_chat_model(temp=rctemp):
             my_api_key=os.environ.get('GROQ_APIKEY')
             globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel,temp=temp)
         case "AZURE":
-            my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
-            if my_api_key is None:
-                logging.error("Azure API key not found")
-                sys.exit(os.EX_CONFIG)  
+            my_api_key, endpoint, embedding_api_key, embedding_endpoint = get_azure_settings() 
             globvars['LLM']     = AzureAIChatCompletionsModel(
-                endpoint=rc.get('LLMS.AZURE','azure_openai_model_endpoint'),
+                endpoint=endpoint,
                 credential=my_api_key,
                 temperature=temp,
                 model_name=rcmodel,
@@ -223,9 +264,8 @@ if rcmodel not in modelnames:
 @cross_origin()
 def ping():
     """ Return the start time """
-    pid = os.getpid()
     timestamp = globvars['timestamp']
-    return {'answer':{'timestamp': timestamp, 'pid': pid}}
+    return {'answer':{'timestamp': timestamp, 'llm': globvars['ModelText']}}
 class InMemoryHistory(BaseChatMessageHistory, BaseModel):
     """In memory implementation of chat message history."""
 
@@ -267,6 +307,7 @@ def encode_image(image_url) -> base64:
         image = base64.b64encode(f).decode("utf-8")
     return image
 
+    
 def embedding_function() -> OpenAIEmbeddings:
     """ Return an Embedding"""
     match globvars['USE_LLM']:
@@ -274,13 +315,10 @@ def embedding_function() -> OpenAIEmbeddings:
             my_api_key=os.environ.get('OPENAI_APIKEY')
             return OpenAIEmbeddings(api_key=my_api_key,model=rcembedding)
         case "AZURE":
-            my_api_key=os.environ.get('AZURE_OPENAI_APIKEY')
-            if my_api_key is None:
-                logging.error("Azure API key not found")
-                sys.exit(os.EX_CONFIG)      
+            my_api_key, endpoint, embedding_api_key, embedding_endpoint = get_azure_settings()
             return AzureAIEmbeddingsModel(
-                endpoint=rc.get('LLMS.AZURE','azure_openai_embedding_endpoint'),
-                credential=my_api_key,
+                endpoint=embedding_endpoint,
+                credential=embedding_api_key,
                 model_name=rcembedding
             ) 
         case _:
@@ -335,7 +373,7 @@ def load_files(vectorstore, file_type):
                 if len(splits) >0:
                     vectorstore.add_documents(splits)
                     logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
-            case 'pptx':
+            case 'pptx'|'xlsx':
                 text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=rc.getint('DEFAULT','chunk_size'),
                         chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
@@ -444,7 +482,7 @@ def initialize_chain(new_vectorstore=False):
     )
 
     ### Answer question ###
-    system_prompt = rcsysprompt2 + (
+    system_prompt = globvars['Prompt'] + (
         "{context}"
     )
     if rcmodel.startswith("o1"):
@@ -544,10 +582,15 @@ def log_error(error_text):
 
 def prompt(values):
     """ Answer the prompt """
-    return globvars['Chain'].invoke(
-            {"input": values[0]},
-            config={"configurable": {"session_id": globvars['Session']}},
+    try:
+        answer = globvars['Chain'].invoke(
+             {"input": values[0]},
+                config={"configurable": {"session_id": globvars['Session']}},
         )
+        return answer
+    except Exception as e:  
+        log_error("Error in prompt: "+str(e))
+        return {'answer':'Error in processing prompt'}
 
 create_call('', prompt, ["GET", "POST"], ['prompt'])
 create_call('full', prompt, ["GET", "POST"], ['prompt'], "context")
@@ -658,6 +701,14 @@ def temp(values):
     return {'answer':'Temperature set to '+str(temperature)}
 
 create_call('temp', temp, ["GET", "POST"], ['temp'])
+
+def systemprompt(values):
+    """ Set system prompt """
+    globvars['Prompt'] = values[0]
+    initialize_chain(True)
+    return {'answer':'System prompt set to '+values[0]}
+
+create_call('systemprompt', systemprompt, ["GET", "POST"], ['systemprompt'])
 
 def reload(values):
     """ Reload documents """
