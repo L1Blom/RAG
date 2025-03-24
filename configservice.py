@@ -25,7 +25,8 @@ def context_processor():
 # Read the constants from a config file
 
 globvars = context_processor()
-globvars['processes'] = {}       
+globvars['processes'] = {}  
+globvars['timer'] = 1     
 
 config_file_path = './config.json'
 
@@ -127,7 +128,6 @@ def stop():
 @cross_origin()
 def set():
     my_input  = request.json
-    print(my_input)
     my_keys   = ['project','port','description','provider','llm']  
     project   = my_input['project']
     if 'originalProject' in my_input:
@@ -176,6 +176,7 @@ def get():
 @app.route('/get_all', methods=['GET'])
 @cross_origin()
 def get_all():
+    globvars['timer'] = 1
     try:
         config = load_config()
         return make_response(config, 200)
@@ -231,9 +232,10 @@ def check_services():
             })
             #logging.error(f"Service {project} is down")
     save_config(config)
+    globvars['timer'] = 60
     
 scheduler = BackgroundScheduler()
-scheduler.add_job(check_services, 'interval', seconds=10)
+scheduler.add_job(check_services, 'interval', seconds=globvars['timer'])
 scheduler.start()
 
 if __name__ == '__main__':

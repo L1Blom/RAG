@@ -130,10 +130,10 @@ def get_modelnames(mode, modeltext, embedding_model=None):
                     model = name[0:hit]
                     modelnames.append(model)
         case 'AZURE':
-            modelnames_AI = rc.get('LLMS.AZURE','models_ai').split(',')
-            modelnames_OPENAI = rc.get('LLMS.AZURE','models_openai').split(',') 
+            modelnames_AI = rc.get('LLMS.AZURE.AI','models').split(',')
+            modelnames_OPENAI = rc.get('LLMS.AZURE.OPENAI','models').split(',') 
             modelnames = modelnames_AI + modelnames_OPENAI
-            embeddingnames = rc.get('LLMS.AZURE','embeddings').split(',')
+            embeddingnames = rc.get('LLMS.AZURE.OPENAI','embeddings').split(',')
         case _: 
             logging.error("Unknown LLM: %s", mode)
             sys.exit(os.EX_CONFIG)
@@ -215,28 +215,41 @@ modelnames, embeddingnames, modelnames_AI, modelnames_OPENAI = get_modelnames(rc
 def get_azure_settings():
     """ Get the Azure settings """
     api_key = None
+    model_api_version = None  
+    embedding_api_version = None
     embedding_api_key = None
     model_endpoint = None
     embedding_endpoint = None
     if rcmodel in modelnames_AI:
         api_key=os.environ.get('AZURE_AI_APIKEY')   
-        model_endpoint = rc.get('LLMS.AZURE','azure_ai_model_endpoint')
+        model_endpoint = rc.get('LLMS.AZURE.AI','model_endpoint')
+        model_api_version = rc.get('LLMS.AZURE.AI','model_api_version')
     if rcmodel in modelnames_OPENAI:
         api_key=os.environ.get('AZURE_OPENAI_APIKEY')   
-        model_endpoint = rc.get('LLMS.AZURE','azure_openai_model_endpoint')
+        model_endpoint = rc.get('LLMS.AZURE.OPENAI','model_endpoint')+rcmodel
+        model_api_version = rc.get('LLMS.AZURE.OPENAI','model_api_version')
     if rcembedding in embeddingnames: 
         embedding_api_key=os.environ.get('AZURE_OPENAI_APIKEY')  
-        embedding_endpoint = rc.get('LLMS.AZURE','azure_openai_embedding_endpoint')
+        embedding_api_version = rc.get('LLMS.AZURE.OPENAI','embedding_api_version') 
+        embedding_endpoint = rc.get('LLMS.AZURE.OPENAI','embedding_endpoint')+rcembedding
     if api_key is None or model_endpoint is None:
         logging.error("Azure API key or endpoint not found")
         sys.exit(os.EX_CONFIG)
-    return api_key, model_endpoint, embedding_api_key, embedding_endpoint
+    return api_key, model_api_version, model_endpoint, embedding_api_key, embedding_api_version, embedding_endpoint
 
 def set_chat_model(temp=rctemp):
     match globvars['USE_LLM']:
         case "OPENAI":
             my_api_key=os.environ.get('OPENAI_APIKEY')
-            globvars['LLM']     = ChatOpenAI(api_key=my_api_key,model=rcmodel,temperature=temp)
+            if rcmodel.startswith("o1"):
+                re = "reasoning_effort='medium'" 
+            else:
+                re = ''
+            globvars['LLM']     = ChatOpenAI(api_key=my_api_key,
+                                             model=rcmodel,
+                                             temperature=temp,
+                                             verbose=True)
+                                             
         case "OLLAMA":
             my_api_key=os.environ.get('OLLAMA_APIKEY')
             globvars['LLM']     = Ollama(model=rcmodel)
@@ -244,16 +257,28 @@ def set_chat_model(temp=rctemp):
             my_api_key=os.environ.get('GROQ_APIKEY')
             globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel,temp=temp)
         case "AZURE":
-            my_api_key, endpoint, embedding_api_key, embedding_endpoint = get_azure_settings() 
-            globvars['LLM']     = AzureAIChatCompletionsModel(
-                endpoint=endpoint,
-                credential=my_api_key,
-                temperature=temp,
-                model_name=rcmodel,
-                verbose=True,
-                client_kwargs={ "logging_enable": True }
-            )
-
+            my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
+            print(f"Model: {rcmodel}, endpoint: {endpoint}, api_version: {api_version}")
+            if rcmodel.startswith("o"):
+                globvars['LLM']     = AzureAIChatCompletionsModel(
+                    endpoint=endpoint,
+                    credential=my_api_key,
+                    model_name=rcmodel,
+                    api_version=api_version,
+                    client_kwargs={"logging_enable": True, "model_name": rcmodel, "api_version": api_version}
+                                    )
+            else:
+                globvars['LLM']     = AzureAIChatCompletionsModel(
+                    endpoint=endpoint,
+                    credential=my_api_key,
+                    temperature=temp,
+                    model_name=rcmodel,
+                    max_tokens=4096,
+                    verbose=True,
+                    api_version=api_version,
+                    client_kwargs={ "logging_enable": True }
+                )
+            
 set_chat_model(rctemp)
 
 if rcmodel not in modelnames:
@@ -315,12 +340,13 @@ def embedding_function() -> OpenAIEmbeddings:
             my_api_key=os.environ.get('OPENAI_APIKEY')
             return OpenAIEmbeddings(api_key=my_api_key,model=rcembedding)
         case "AZURE":
-            my_api_key, endpoint, embedding_api_key, embedding_endpoint = get_azure_settings()
+            my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings()
             return AzureAIEmbeddingsModel(
                 endpoint=embedding_endpoint,
                 credential=embedding_api_key,
-                model_name=rcembedding
-            ) 
+                model_name=rcembedding,
+                api_version=embedding_api_version
+                ) 
         case _:
             return OpenAIEmbeddings()
 
@@ -329,7 +355,7 @@ def load_files(vectorstore, file_type):
                   'pptx' : [UnstructuredPowerPointLoader,'by_title'],
                   'xlsx' : [UnstructuredExcelLoader,'single'],
                   'pdf'  : [PyPDFDirectoryLoader,'elements'],
-                  'txt'  : [TextLoader,'elements']}  
+                  'txt'  : [TextLoader,'single']}  
 
     for ftype in file_types.keys():
         if file_type != 'all' and ftype != file_type:
@@ -345,14 +371,13 @@ def load_files(vectorstore, file_type):
                 if rc.has_option('DEFAULT','LANGUAGE'):
                     text_splitter = RecursiveCharacterTextSplitter.from_language(
                         language=Language[rc.get('DEFAULT','language')],
-                        chunk_size=rc.getint('DEFAULT','chunk_size'),
-                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                        chunk_size=globvars['ChunkSize'],
+                        chunk_overlap=globvars['ChunkOverlap'])
                 else:
                     text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=rc.getint('DEFAULT','chunk_size'),
-                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                        chunk_size=globvars['ChunkSize'],
+                        chunk_overlap=globvars['ChunkOverlap'])
                 text_loader_kwargs={'autodetect_encoding': True}
-
                 loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                             glob=glob,
                             loader_cls=loader_cls,
@@ -360,13 +385,14 @@ def load_files(vectorstore, file_type):
                             loader_kwargs=text_loader_kwargs)
                 docs = loader.load()
                 splits = text_splitter.split_documents(docs)
+                #print(splits)
                 if len(splits) >0:
                     vectorstore.add_documents(splits)
                     logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
             case 'pdf':
                 text_splitter = RecursiveCharacterTextSplitter(
-                            chunk_size=rc.getint('DEFAULT','chunk_size'),
-                            chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                            chunk_size=globvars['ChunkSize'],
+                            chunk_overlap=globvars['ChunkOverlap'])
                 loader = PyPDFDirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                             glob=glob)
                 splits = loader.load_and_split()
@@ -375,8 +401,8 @@ def load_files(vectorstore, file_type):
                     logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))              
             case 'pptx'|'xlsx':
                 text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=rc.getint('DEFAULT','chunk_size'),
-                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                        chunk_size=globvars['ChunkSize'],
+                        chunk_overlap=globvars['ChunkOverlap'])
                 loader_kwargs={'autodetect_encoding': True,
                                 'chunking_strategy': mode}
                 loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
@@ -397,8 +423,8 @@ def load_files(vectorstore, file_type):
                     logging.info("Context loaded from %s documents, %s docs",ftype, str(len(docs)))              
             case _:
                 text_splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=rc.getint('DEFAULT','chunk_size'),
-                        chunk_overlap=rc.getint('DEFAULT','chunk_overlap'))
+                        chunk_size=globvars['ChunkSize'],
+                        chunk_overlap=globvars['ChunkOverlap'])
                 loader_kwargs={'autodetect_encoding': True, 'mode': mode}
                 loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                             glob=glob,
