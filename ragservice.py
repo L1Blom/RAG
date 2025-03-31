@@ -33,7 +33,7 @@ from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings, AzureOpenAI
 from langchain_community.llms.ollama import Ollama
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
@@ -61,9 +61,10 @@ if os.path.exists("env/config.env"):
 # Load the secrets from the secrets directory
 if os.path.exists("/run/secrets"):
     logging.info("Loading secrets from /run/secrets")
+    os.environ['AZURE_AI_APIKEY'] = read_secret('/run/secrets/azure_ai_apikey')
     os.environ['AZURE_OPENAI_APIKEY'] = read_secret('/run/secrets/azure_openai_apikey')
     os.environ['OPENAI_APIKEY'] = read_secret('/run/secrets/openai_apikey')
-    os.environ['LLAMA3_APIKEY'] = read_secret('/run/secrets/llama3_apikey')
+    os.environ['OLLAMA_APIKEY'] = read_secret('/run/secrets/ollama_apikey')
     os.environ['GROQ_APIKEY'] = read_secret('/run/secrets/groq_apikey')
 
 # set working dir to program dir to allow relative paths in configs
@@ -195,6 +196,7 @@ rcembedding     = globvars['Embedding']    = rc.get('LLMS.'+rcllms,'embedding_mo
 rctemp          = globvars['Temperature']  = rc.getfloat('DEFAULT','temperature')
 rcsimilar       = globvars['Similar']      = rc.getint('DEFAULT','similar') 
 rcscore         = globvars['Score']        = rc.getfloat('DEFAULT','score') 
+rctokens        = globvars['Tokens']       = rc.getfloat('DEFAULT','max_tokens') 
 rcsysprompt1    = globvars['SystemPrompt'] = rc.get('DEFAULT','contextualize_q_system_prompt')
 rcsysprompt2    = globvars['SystemPrompt'] = rc.get('DEFAULT','system_prompt')
 rcchunksize     = globvars['ChunkSize']    = rc.getint('DEFAULT','chunk_size') 
@@ -273,7 +275,7 @@ def set_chat_model(temp=rctemp):
                     credential=my_api_key,
                     temperature=temp,
                     model_name=rcmodel,
-                    max_tokens=4096,
+                    max_tokens=rctokens,
                     verbose=True,
                     api_version=api_version,
                     client_kwargs={ "logging_enable": True }
@@ -593,7 +595,7 @@ def create_call(name, function, methods, params=[], response_output="text"):
                 
         except HTTPException as e:
             logging.error("Error processing %s: %s",name, str(e))
-            return make_response(f"Error processing {name}", 500)
+            return make_response(f"Error processing {name}, due to {str(e)}", 500)
     _function.__name__ = 'p'+name
     if name == '':
         my_path = app_path
@@ -825,19 +827,38 @@ def process_image(values):
     image_url = quote(my_url, safe='/:?=&')
     logging.info("Processing image: %s, with prompt: %s", image_url, text)
     bimage = encode_image(image_url)
-    chain = ChatOpenAI(api_key=os.environ.get('OPENAI_APIKEY'),
+    if globvars['USE_LLM'] == 'OPENAI':
+        chain = ChatOpenAI(api_key=os.environ.get('OPENAI_APIKEY'),
                        model=globvars['ModelText'],
-                        temperature=globvars['Temperature'])
-    msg = chain.invoke(
-        [
-            AIMessage(content="Picture revealer"),
-            HumanMessage(content=[
-                {"type": "text", "text": text},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
-            ])
-        ]
-    )
-    return {'answer': msg.content}
+                       temperature=globvars['Temperature'])
+        msg = chain.invoke(
+            [
+                AIMessage(content="Picture revealer"),
+                HumanMessage(content=[
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+                ])
+            ]
+        )
+    elif globvars['USE_LLM'] == 'AZURE':
+        my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
+        client = AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=my_api_key,
+            model=globvars['ModelText']
+        )
+        response = client.invoke(
+            messages=[
+                AIMessage(content="Picture revealer"),
+                HumanMessage(content=[
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+                ])
+            ]
+        )
+        msg = response.choices[0]
+        return {'answer': msg.content}
 
 create_call('image', process_image, ["GET","POST"], ['image','prompt'])
 
