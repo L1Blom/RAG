@@ -243,10 +243,6 @@ def set_chat_model(temp=rctemp):
     match globvars['USE_LLM']:
         case "OPENAI":
             my_api_key=os.environ.get('OPENAI_APIKEY')
-            if rcmodel.startswith("o1"):
-                re = "reasoning_effort='medium'" 
-            else:
-                re = ''
             globvars['LLM']     = ChatOpenAI(api_key=my_api_key,
                                              model=rcmodel,
                                              temperature=temp,
@@ -261,21 +257,19 @@ def set_chat_model(temp=rctemp):
         case "AZURE":
             my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
             print(f"Model: {rcmodel}, endpoint: {endpoint}, api_version: {api_version}")
-            if rcmodel.startswith("o"):
+            if globvars['ModelText'] in modelnames_AI:
+                logging.info("Model %s uses Azure API", rcmodel)    
                 globvars['LLM']     = AzureAIChatCompletionsModel(
                     endpoint=endpoint,
                     credential=my_api_key,
-                    model_name=rcmodel,
-                    api_version=api_version,
-                    client_kwargs={"logging_enable": True, "model_name": rcmodel, "api_version": api_version}
-                                    )
+                    model_name=globvars['ModelText'])
             else:
                 globvars['LLM']     = AzureAIChatCompletionsModel(
                     endpoint=endpoint,
                     credential=my_api_key,
                     temperature=temp,
                     model_name=rcmodel,
-                    max_tokens=rctokens,
+                    max_completion_tokens=rctokens,
                     verbose=True,
                     api_version=api_version,
                     client_kwargs={ "logging_enable": True }
@@ -489,21 +483,13 @@ def initialize_chain(new_vectorstore=False):
                        'k':8})
 
     ### Contextualize question ###
-    if rcmodel.startswith("o1"):
-        contextualize_q_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", rcsysprompt1),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
-    else:
-        contextualize_q_prompt = ChatPromptTemplate.from_messages(
-            [
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", rcsysprompt1),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
         
     history_aware_retriever = create_history_aware_retriever(
         this_model, retriever, contextualize_q_prompt
@@ -513,21 +499,13 @@ def initialize_chain(new_vectorstore=False):
     system_prompt = globvars['Prompt'] + (
         "{context}"
     )
-    if rcmodel.startswith("o1"):
-        qa_prompt = ChatPromptTemplate.from_messages(
-            [
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
-    else:
-        qa_prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", system_prompt),
-                MessagesPlaceholder("chat_history"),
-                ("human", "{input}"),
-            ]
-        )
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
         
     def log_retrieved_documents(retrieved_docs):
         for doc in retrieved_docs:
@@ -840,25 +818,25 @@ def process_image(values):
                 ])
             ]
         )
-    elif globvars['USE_LLM'] == 'AZURE':
-        my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
-        client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=my_api_key,
-            model=globvars['ModelText']
-        )
-        response = client.invoke(
-            messages=[
-                AIMessage(content="Picture revealer"),
-                HumanMessage(content=[
-                    {"type": "text", "text": text},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
-                ])
-            ]
-        )
+#    elif globvars['USE_LLM'] == 'AZURE':
+#        my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
+#        client = AzureOpenAI(
+#           api_version=api_version,
+#           azure_endpoint=endpoint,
+#           api_key=my_api_key,
+#           model=globvars['ModelText']
+#       )
+#       response = client.invoke(
+#           messages=[
+#               AIMessage(content="Picture revealer"),
+#               HumanMessage(content=[
+#                   {"type": "text", "text": text},
+#                   {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+#                ])
+#            ]
+#        )
         msg = response.choices[0]
-        return {'answer': msg.content}
+    return {'answer': msg.content}
 
 create_call('image', process_image, ["GET","POST"], ['image','prompt'])
 
