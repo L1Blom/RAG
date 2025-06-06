@@ -38,6 +38,9 @@ from langchain_community.llms.ollama import Ollama
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
 from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
 from langchain_azure_ai.embeddings import AzureAIEmbeddingsModel
+from azure.ai.inference.models import ImageContentItem, TextContentItem, ImageUrl, UserMessage, SystemMessage
+from azure.ai.inference import ChatCompletionsClient
+from azure.core.credentials import AzureKeyCredential
 from langchain_groq import ChatGroq
 from groq import Groq
 import time
@@ -562,7 +565,12 @@ def create_call(name, function, methods, params=[], response_output="text"):
                     return mylist
                 case "file":
                     logging.info("Processing %s succeded",name)
-                    return result
+                    print(result)
+                    if result == None:
+                        logging.error("File not found")
+                        return make_response("", 200)
+                    else:
+                        return result
                 case "search":
                     logging.info("Processing %s succeded",name)
                     mylist = [{'page_content':item[0].page_content,
@@ -748,7 +756,7 @@ create_call('cache', cache, ["GET", "POST"])
 def send_files(values):
     """ Serve HTML files """
     file = values[0]
-    html_dir = rc.get('DEFAULT','html')
+    html_dir = rc.get('DEFAULT','data_dir')
     absolute_path = html_dir[0:1] == '/'
     if absolute_path:
         serve_file = os.path.normpath(os.path.join(html_dir,file))
@@ -757,7 +765,11 @@ def send_files(values):
     if not serve_file.startswith(base_dir):
         logging.error("Parameter value for HTML not allowed")
     logging.info('File served: '+serve_file)
-    return send_file(serve_file)
+    logging.info('File exists: '+str(os.path.exists(serve_file)))
+    if os.path.exists(serve_file):
+        return send_file(serve_file)
+    else:
+        return 
 
 create_call('file', send_files, ["GET"], ['file'], "file")
 
@@ -799,8 +811,8 @@ def process_image(values):
     text   = values[1]
     if not my_url.isalnum:
         log_error("URL is not well-formed")
-    if globvars['ModelText'] != 'gpt-4o':
-        log_error("Image processing only available in gpt-4o")
+    #if globvars['ModelText'] != 'gpt-4o':
+    #    log_error("Image processing only available in gpt-4o")
 
     image_url = quote(my_url, safe='/:?=&')
     logging.info("Processing image: %s, with prompt: %s", image_url, text)
@@ -818,25 +830,26 @@ def process_image(values):
                 ])
             ]
         )
-#    elif globvars['USE_LLM'] == 'AZURE':
-#        my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
-#        client = AzureOpenAI(
-#           api_version=api_version,
-#           azure_endpoint=endpoint,
-#           api_key=my_api_key,
-#           model=globvars['ModelText']
-#       )
-#       response = client.invoke(
-#           messages=[
-#               AIMessage(content="Picture revealer"),
-#               HumanMessage(content=[
-#                   {"type": "text", "text": text},
-#                   {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
-#                ])
-#            ]
-#        )
-        msg = response.choices[0]
-    return {'answer': msg.content}
+    elif globvars['USE_LLM'] == 'AZURE':
+        messages = [
+            SystemMessage(content="Picture revealer"),
+            UserMessage(content=[
+                {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+            ])
+        ]
+        chain = ChatCompletionsClient(credential=AzureKeyCredential(os.environ.get('AZURE_AI_APIKEY')),
+                           endpoint=rc.get('LLMS.AZURE.AI','model_endpoint'),
+                       model=globvars['ModelText'])
+        msg = chain.complete(
+            messages=messages,
+            response_format="json_object",
+            stream=False,
+        )
+        logging.info(msg)
+        
+        #msg = response.choices[0]
+    return {'answer': msg.get("choices")[0].get("message").get("content")}
 
 create_call('image', process_image, ["GET","POST"], ['image','prompt'])
 
