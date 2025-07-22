@@ -27,7 +27,7 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader, UnstructuredExcelLoader
+from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader, UnstructuredExcelLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
@@ -354,7 +354,8 @@ def load_files(vectorstore, file_type):
                   'pptx' : [UnstructuredPowerPointLoader,'by_title'],
                   'xlsx' : [UnstructuredExcelLoader,'single'],
                   'pdf'  : [PyPDFDirectoryLoader,'elements'],
-                  'txt'  : [TextLoader,'single']}  
+                  'txt'  : [TextLoader,'single'],
+                  'html' : [WebBaseLoader,'single']}  
 
     for ftype in file_types.keys():
         if file_type != 'all' and ftype != file_type:
@@ -366,6 +367,28 @@ def load_files(vectorstore, file_type):
         logging.info("Loading %s files with glob %s",ftype,glob)
         splits = None
         match ftype:
+            case 'html':
+                logging.info("Loading HTML files with glob %s",glob)
+                text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=globvars['ChunkSize'],
+                        chunk_overlap=globvars['ChunkOverlap'])
+                loader_kwargs={'autodetect_encoding': True}
+                context_dir = rc.get('DEFAULT','data_dir')
+                serve_files = os.path.normpath(os.path.join(base_dir,context_dir))
+                if not serve_files.startswith(base_dir):
+                    logging.error("Parameter value for DATA_DIR not allowed")
+
+                urls = load_urls()
+                if urls is None or len(urls) == 0:
+                    loader = WebBaseLoader(
+                        web_paths=urls,
+                        continue_on_failure=True,                    
+                    )
+                    docs = loader.load()
+                    splits = text_splitter.split_documents(docs)
+                    if len(splits) >0:
+                        vectorstore.add_documents(splits)
+                        logging.info("Context loaded from %s documents, %s splits",ftype, str(len(splits)))
             case 'txt':
                 if rc.has_option('DEFAULT','LANGUAGE'):
                     text_splitter = RecursiveCharacterTextSplitter.from_language(
@@ -777,32 +800,55 @@ def list_files(values):
     """ List context files """
     file = values[0]
     action = values[1]
+    mode = values[2]
     if action not in ['list','delete']:
         logging.error(f"Action {action} value not allowed, only list or delete")
     context_dir = rc.get('DEFAULT','data_dir')
     serve_files = os.path.normpath(os.path.join(base_dir,context_dir))
     if not serve_files.startswith(base_dir):
         logging.error("Parameter value for DATA_DIR not allowed")
-    all_files = os.listdir(serve_files)
-    output = {
-        "name": "Context files",
-        "type": "folder",
-        "items": []
-    }
-    if action == 'delete':
-        os.remove(os.path.join(serve_files,file))  
-    context_files = [file for file in all_files if os.path.isfile(os.path.join(serve_files,file))]  
-    logging.info('Context files: '+ ','.join(context_files))
-    for file in context_files:
-        output['items'].append(
-            {
-                "name": file,
-                "type": "file",
-            }
-        )
+    if mode == 'file':
+        all_files = os.listdir(serve_files)
+        output = {
+            "name": "Context files",
+            "type": "folder",
+            "items": []
+        }
+        if action == 'delete':
+            os.remove(os.path.join(serve_files,file))  
+        context_files = [file for file in all_files if os.path.isfile(os.path.join(serve_files,file))]  
+        logging.info('Context files: '+ ','.join(context_files))
+        for file in context_files:
+            output['items'].append(
+                {
+                    "name": file,
+                    "type": "file",
+                }
+            )
+    if mode == 'url':
+        urls = load_urls()
+        if urls is None:
+            urls = []
+        output = {
+            "name": "Context URLs",
+            "type": "urls",
+            "items": []
+        }
+        if action == 'delete':
+            urls.remove(file)
+            urls_file = os.path.join(serve_files, 'urls.json')
+            with open(urls_file, 'w') as f:
+                json.dump(urls, f, indent=4)
+        for url in urls:
+            output['items'].append(
+                {
+                    "name": url,
+                    "type": "url",
+                }
+            )
     return output
 
-create_call('context', list_files, ["GET"],['file','action'],"file")
+create_call('context', list_files, ["GET"],['file','action','mode'],"file")
 
 def process_image(values):
     """ Send image to ChatGPT and send prompt to analyse contents """
@@ -855,25 +901,22 @@ create_call('image', process_image, ["GET","POST"], ['image','prompt'])
 
 def upload_file(values):
     """ Handles the file upload """
-
     file = values['file']
     if file.filename == '':
         log_error("Error in upload data, no filename found")
 
     filename = secure_filename(file.filename)
-
-    # module 'constants' is not iterable, so repeating code unfortunately
-    found = False
-    if PurePath(filename).match(rc.get('DEFAULT','data_glob_txt')):
-        found = True
-    if PurePath(filename).match(rc.get('DEFAULT','data_glob_pdf')):
-        found = True
-    if PurePath(filename).match(rc.get('DEFAULT','data_glob_docx')):
-        found = True
-    if PurePath(filename).match(rc.get('DEFAULT','data_glob_xlsx')):
-        found = True
-    if PurePath(filename).match(rc.get('DEFAULT','data_glob_pptx')):
-        found = True
+    found = any(
+        PurePath(filename).match(rc.get('DEFAULT', glob))
+        for glob in [
+            'data_glob_txt',
+            'data_glob_pdf',
+            'data_glob_docx',
+            'data_glob_xlsx',
+            'data_glob_pptx',
+            'data_glob_html'
+        ]
+    )
 
     if not found:
         log_error("File to upload has extension that doesn't match GLOB_* constants")
@@ -884,9 +927,58 @@ def upload_file(values):
     file.save(filepath)
     logging.info("File %s saved on: %s",filename,filepath)
     load_files(globvars['VectorStore'], filename.split('.')[-1])
-    return {'answer': 'Upload completed'}
 
 create_call('upload', upload_file, ["POST"])
+
+def load_urls():
+    context_dir = rc.get('DEFAULT','data_dir')
+    serve_files = os.path.normpath(os.path.join(base_dir,context_dir))
+    if not serve_files.startswith(base_dir):
+        logging.error("Parameter value for DATA_DIR not allowed")
+    urls_file = os.path.join(serve_files, 'urls.json')
+    if os.path.exists(urls_file):
+        with open(urls_file, 'r') as file:
+            try:
+                contents = file.read()
+                if contents.strip() == "":
+                    contents = []
+                else:
+                    contents = json.loads(contents)
+                logging.info("Loaded URLs from %s", urls_file)
+                if not isinstance(contents, list):
+                    logging.error("URLs file does not contain a list")
+                    return None
+                if len(contents) > 0:
+                    logging.info("Found %d URLs in file", len(contents))
+                else:
+                    logging.info("No URLs found in file, returning empty list")
+                return contents
+            except json.JSONDecodeError as e:
+                logging.error("Error reading config file: %s", e)
+            return None
+
+def upload_url(values):
+    """ Handles the file upload """
+    urls = load_urls()
+    if urls is None:
+        urls = []
+    url = values[0]
+    
+    # Check if filename is a URL
+    import re
+    url_pattern = re.compile(r'^(https?|ftp)://[^\s/$.?#].[^\s]*$', re.IGNORECASE)
+    if url_pattern.match(url):
+        # Encode URL to a safe filename
+        urls.append(url)
+        urls_file = os.path.join(rc.get('DEFAULT','data_dir'), 'urls.json')
+        with open(urls_file, 'w') as file:
+            json.dump(urls, file, indent=4)
+        load_files(globvars['VectorStore'], 'html')
+        logging.info("URL %s stored successfully", url)
+    return {'answer': 'URL stored successfully'}
+
+
+create_call('uploadurl', upload_url, ["GET"],['data'])
     
 @app.teardown_request
 def log_unhandled(e):

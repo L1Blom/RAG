@@ -32,43 +32,49 @@ config_file_path = './config.json'
 
 def load_config():
     if os.path.exists(config_file_path):
-        with open(config_file_path, 'r') as file:
-            try:
-                contents = json.load(file)
-                return contents
-            except json.JSONDecodeError as e:
-                logging.error("Error reading config file: %s", e)
-        configfiles = [f for f in os.listdir('constants') if f.endswith('.ini')]
-        if configfiles:
-            output = {}
-            for configfile in configfiles:
-                if configfile.startswith('constants_'):
-                    if not configfile.startswith('constants__'):
-                        project = os.path.splitext(configfile)[0].split('_')[1]
-                        rc = configparser.ConfigParser()
-                        rr=rc.read('constants/'+configfile)
-                        print("Reading config file: ", rr)
-                        port = rc.get('FLASK','port')
-                        description = rc.get('DEFAULT','description')
-                        provider = rc.get('LLMS','use_llm')
-                        llm = rc.get('LLMS'+'.'+provider,'modeltext')
-                        output[project] = {
-                                "port": port,
-                                "description": description,
-                                "provider": provider,
-                                "llm": llm
-                            }
-            with open(config_file_path, 'w') as file:
-                json.dump(output, file)
-            return output
-        else:
-            logging.error("Error: No config files found in constants directory")
-            # Create a default config if no config files are found
-            with open(config_file_path, 'w') as file:
-                json.dump({"DEFAULT": {"port": "5000", "description": "Default project", "provider": "OPENAI", "llm": "gpt-4o"}}, file)
-            logging.info("Default config created")  
-            return json.load(config_file_path)
-    return {}
+        if os.stat(config_file_path).st_size > 0: 
+            with open(config_file_path, 'r') as file:
+                try:
+                    contents = json.load(file)
+                    if len(contents) == 0:
+                        logging.info("Config file is empty, reading constants directory")
+                    else:
+                        return contents
+                except json.JSONDecodeError as e:
+                    logging.error("Error reading config file: %s", e)
+                return
+
+    logging.info("Config file is empty or non-existent, reading constants directory")
+    configfiles = [f for f in os.listdir('constants') if f.endswith('.ini')]
+    if configfiles:
+        output = {}
+        for configfile in configfiles:
+            if configfile.startswith('constants_'):
+                if not configfile.startswith('constants__'):
+                    project = os.path.splitext(configfile)[0].split('_')[1]
+                    rc = configparser.ConfigParser()
+                    rr=rc.read('constants/'+configfile)
+                    print("Reading config file: ", rr)
+                    port = rc.get('FLASK','port')
+                    description = rc.get('DEFAULT','description')
+                    provider = rc.get('LLMS','use_llm')
+                    llm = rc.get('LLMS'+'.'+provider,'modeltext')
+                    output[project] = {
+                            "port": port,
+                            "description": description,
+                            "provider": provider,
+                            "llm": llm
+                        }
+        with open(config_file_path, 'w') as file:
+            json.dump(output, file)
+        return output
+    else:
+        logging.error("Error: No config files found in constants directory")
+        # Create a default config if no config files are found
+        with open(config_file_path, 'w') as file:
+            json.dump({"DEFAULT": {"port": "5000", "description": "Default project", "provider": "OPENAI", "llm": "gpt-4o"}}, file)
+        logging.info("Default config created")  
+        return json.load(config_file_path)
 
 def save_config(config):
     with open(config_file_path, 'w') as file:
@@ -116,6 +122,9 @@ def read_process_output(process):
 def load_configurations():
     rc = configparser.ConfigParser()
     config = load_config()
+    if config == None:
+        logging.error("No configurations found in config.json, please check the constants directory")
+        return
     for project in config:
         constantsfile = "constants/constants_"+project+".ini"
         if os.path.exists(constantsfile):
@@ -162,12 +171,15 @@ def stop():
 @cross_origin()
 def set():
     my_input  = request.json
+    logging.info("Received input: %s", my_input)
     my_keys   = ['project','port','description','provider','llm']  
     project   = my_input['project']
     if 'originalProject' in my_input:
         original_project = my_input['originalProject']
     try:
         config = load_config()
+        if config is None:
+            config = {}
         update = {}
         for key in my_keys:
             update.update({key: my_input[key]})
@@ -213,9 +225,12 @@ def get_all():
     globvars['timer'] = 1
     try:
         config = load_config()
+        if config is None:
+            config = {}
         return make_response(config, 200)
     except Exception as e:
         logging.error("Error retrieving project code: %s", e)
+        globvars['timer'] = 60
         return make_response({'error': str(e)}, 400)
 
 @app.route('/delete', methods=['DELETE'])
@@ -240,7 +255,10 @@ def check_services():
     config = load_config()
     in_docker = os.environ.get('IN_DOCKER', False)
     hostname = os.environ.get('REACT_APP_RAG_SERVER') or 'localhost'
-            
+
+    if config == None:
+        logging.warning("No services configured, skipping health check")
+        return
     for project, details in config.items():
         host = 'http://'+hostname+':'+details['port']
         try:
