@@ -379,7 +379,7 @@ def load_files(vectorstore, file_type):
                     logging.error("Parameter value for DATA_DIR not allowed")
 
                 urls = load_urls()
-                if urls is None or len(urls) == 0:
+                if urls is not None:
                     loader = WebBaseLoader(
                         web_paths=urls,
                         continue_on_failure=True,                    
