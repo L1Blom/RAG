@@ -6,8 +6,6 @@ services:
       - "8000-8000:8000-8000"  # Expose port 8000
     volumes:
       - data:/app/data
-      - ./constants:/app/constants
-      - ./config.json:/app/config.json  # Mount config.json as a volume
     environment:
       - FLASK_ENV=production
 

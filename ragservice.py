@@ -27,7 +27,7 @@ from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
-from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader, UnstructuredExcelLoader
+from langchain_community.document_loaders import WebBaseLoader, DirectoryLoader,TextLoader, PyPDFDirectoryLoader, UnstructuredWordDocumentLoader, UnstructuredPowerPointLoader, UnstructuredExcelLoader, SeleniumURLLoader
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
