@@ -115,7 +115,7 @@ def set_env(project):
 def read_process_output(process):
     def target():
         for line in iter(process.stdout.readline, b''):
-            print(line.decode(), end='')
+            print(line)
     thread = threading.Thread(target=target)
     thread.start()
 
