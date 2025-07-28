@@ -155,7 +155,8 @@ def start():
         env=os.environ,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        bufsize=0)
+        bufsize=1,
+        universal_newlines=True)
     read_process_output(globvars['processes'][project])
     logging.info(f"Project {project} started")
     return make_response({'message':'Project started'}, 200)    

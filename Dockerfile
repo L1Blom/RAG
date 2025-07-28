@@ -15,6 +15,7 @@ RUN . venv/bin/activate && pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
+RUN rm config.json
 COPY ./constants/constants.ini /app/constants/constants.ini
 COPY ./constants/constants.ini /app/constants/constants_template.ini
 COPY ./config.json_template /app/config.json 

@@ -1,1 +1,4 @@
 env/
+config.json
+constants/constants_[^_]*.ini
+data/[!_]*
