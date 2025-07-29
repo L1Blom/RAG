@@ -928,6 +928,7 @@ def upload_file(values):
     file.save(filepath)
     logging.info("File %s saved on: %s",filename,filepath)
     load_files(globvars['VectorStore'], filename.split('.')[-1])
+    return {'answer': 'File stored successfully'}
 
 create_call('upload', upload_file, ["POST"])
 
