@@ -572,6 +572,7 @@ def create_call(name, function, methods, params=[], response_output="text"):
                         logging.info("%s: %s", param, values[-1])
         try: 
             result = function(values)
+            sys.stdout.flush()
             match response_output:
                 case "text":
                     logging.info("Result %s: %s",name, result['answer'])
