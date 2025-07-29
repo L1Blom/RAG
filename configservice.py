@@ -115,7 +115,7 @@ def set_env(project):
 def read_process_output(process):
     def target():
         for line in iter(process.stdout.readline, b''):
-            print(line)
+            print(line, end='')
     thread = threading.Thread(target=target)
     thread.start()
 
@@ -141,7 +141,8 @@ def load_configurations():
             env=os.environ,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            bufsize=0)
+            bufsize=1,
+            universal_newlines=True)
         read_process_output(globvars['processes'][project])
         logging.info(f"Project {project} started")  
 
