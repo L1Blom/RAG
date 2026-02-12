@@ -69,6 +69,7 @@ if os.path.exists("/run/secrets"):
     os.environ['OPENAI_APIKEY'] = read_secret('/run/secrets/openai_apikey')
     os.environ['OLLAMA_APIKEY'] = read_secret('/run/secrets/ollama_apikey')
     os.environ['GROQ_APIKEY'] = read_secret('/run/secrets/groq_apikey')
+    os.environ['NEBUL_APIKEY'] = read_secret('/run/secrets/nebul_apikey')
 
 # set working dir to program dir to allow relative paths in configs
 wd = os.path.abspath(inspect.getsourcefile(lambda:0)).split("/")
@@ -138,6 +139,9 @@ def get_modelnames(mode, modeltext, embedding_model=None):
             modelnames_OPENAI = rc.get('LLMS.AZURE.OPENAI','models').split(',') 
             modelnames = modelnames_AI + modelnames_OPENAI
             embeddingnames = rc.get('LLMS.AZURE.OPENAI','embeddings').split(',')
+        case 'NEBUL':
+            modelnames = rc.get('LLMS.NEBUL','models').split(',')
+            embeddingnames = rc.get('LLMS.NEBUL','embeddings').split(',')
         case _: 
             logging.error("Unknown LLM: %s", mode)
             sys.exit(os.EX_CONFIG)
@@ -257,6 +261,14 @@ def set_chat_model(temp=rctemp):
         case "GROQ":
             my_api_key=os.environ.get('GROQ_APIKEY')
             globvars['LLM']     = ChatGroq(api_key=my_api_key,model=rcmodel,temp=temp)
+        case "NEBUL":
+            my_api_key=os.environ.get('NEBUL_APIKEY')
+            nebul_base_url=rc.get('LLMS.NEBUL','base_url')
+            globvars['LLM']     = ChatOpenAI(api_key=my_api_key,
+                                             base_url=nebul_base_url,
+                                             model=rcmodel,
+                                             temperature=temp,
+                                             verbose=True)
         case "AZURE":
             my_api_key, api_version, endpoint, embedding_api_key, embedding_api_version, embedding_endpoint = get_azure_settings() 
             print(f"Model: {rcmodel}, endpoint: {endpoint}, api_version: {api_version}")
@@ -346,6 +358,12 @@ def embedding_function() -> OpenAIEmbeddings:
                 model_name=rcembedding,
                 api_version=embedding_api_version
                 ) 
+        case "NEBUL":
+            my_api_key=os.environ.get('NEBUL_APIKEY')
+            nebul_base_url=rc.get('LLMS.NEBUL','base_url')
+            return OpenAIEmbeddings(api_key=my_api_key,
+                                    base_url=nebul_base_url,
+                                    model=rcembedding)
         case _:
             return OpenAIEmbeddings()
 
@@ -877,6 +895,20 @@ def process_image(values):
                 ])
             ]
         )
+    elif globvars['USE_LLM'] == 'NEBUL':
+        chain = ChatOpenAI(api_key=os.environ.get('NEBUL_APIKEY'),
+                       base_url=rc.get('LLMS.NEBUL','base_url'),
+                       model=globvars['ModelText'],
+                       temperature=globvars['Temperature'])
+        msg = chain.invoke(
+            [
+                AIMessage(content="Picture revealer"),
+                HumanMessage(content=[
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{bimage}"}}
+                ])
+            ]
+        )
     elif globvars['USE_LLM'] == 'AZURE':
         messages = [
             SystemMessage(content="Picture revealer"),
@@ -989,9 +1021,9 @@ def log_unhandled(e):
         
 if __name__ == '__main__':
     # Call an API to get the port number
-    # fall back if config server is not available
+    # fall back to constants file if config server is not available
     host = 'localhost'
-    port = 5200
+    port = rc.getint('FLASK','port')
     try:
         response = urlopen(rcconfighost + "/get?project=" + rag_project)
         configs = json.loads(response.read().decode('utf-8'))
@@ -999,7 +1031,7 @@ if __name__ == '__main__':
         logging.info("Port found at config server: %s", str(port))
     except Exception as e:
         logging.error("Failed to get port number from API: %s", e)
-        logging.error("Defaulting to port nr: %s", str(port))
+        logging.error("Using port from constants file: %s", str(port))
     if initialize_chain():
         app.run(port=port, debug=rc.getboolean('FLASK', 'debug'), host="0.0.0.0")
     else:
