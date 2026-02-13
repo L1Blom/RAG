@@ -369,7 +369,7 @@ def embedding_function() -> OpenAIEmbeddings:
 
 def load_files(vectorstore, file_type):
     file_types = {'docx' : [UnstructuredWordDocumentLoader,'single'],
-                  'pptx' : [UnstructuredPowerPointLoader,'by_title'],
+                  'pptx' : [UnstructuredPowerPointLoader,'elements'],
                   'xlsx' : [UnstructuredExcelLoader,'single'],
                   'pdf'  : [PyPDFDirectoryLoader,'elements'],
                   'txt'  : [TextLoader,'single'],
@@ -443,24 +443,30 @@ def load_files(vectorstore, file_type):
                 text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=globvars['ChunkSize'],
                         chunk_overlap=globvars['ChunkOverlap'])
-                loader_kwargs={'autodetect_encoding': True,
-                                'chunking_strategy': mode}
+                loader_kwargs={'mode': mode}
                 loader = DirectoryLoader(path=rc.get('DEFAULT','data_dir'),
                             glob=glob,
                             loader_cls=loader_cls,
                             silent_errors=True,
                             loader_kwargs=loader_kwargs)
                 docs = loader.load()
+                # Filter out empty elements and clean metadata
+                cleaned_docs = []
                 for doc in docs:
+                    if not doc.page_content.strip():
+                        continue
                     if dict(doc)['metadata']:
                         mtd = dict(doc)['metadata']
                         for key in mtd:
                             if type(mtd[key]) == list:
                                 mtd[key] = ','.join([str(item) for item in mtd[key]])
                         doc.metadata = mtd
-                if len(docs) >0:
-                    vectorstore.add_documents(docs)
-                    logging.info("Context loaded from %s documents, %s docs",ftype, str(len(docs)))              
+                    cleaned_docs.append(doc)
+                if len(cleaned_docs) > 0:
+                    splits = text_splitter.split_documents(cleaned_docs)
+                    if len(splits) > 0:
+                        vectorstore.add_documents(splits)
+                        logging.info("Context loaded from %s documents, %s elements, %s splits",ftype, str(len(cleaned_docs)), str(len(splits)))              
             case _:
                 text_splitter = RecursiveCharacterTextSplitter(
                         chunk_size=globvars['ChunkSize'],
