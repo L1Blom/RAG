@@ -1,7 +1,9 @@
+import atexit
 import configparser
 import os
 import json
 import logging
+import signal
 import subprocess
 import sys
 from flask import Flask, request, make_response
@@ -144,7 +146,7 @@ def load_configurations():
             bufsize=1,
             universal_newlines=True)
         read_process_output(globvars['processes'][project])
-        logging.info(f"Project {project} started")  
+        print(f"Project {project} started (pid {globvars['processes'][project].pid})")
 
 
 @app.route('/start', methods=['GET'])
@@ -159,7 +161,7 @@ def start():
         bufsize=1,
         universal_newlines=True)
     read_process_output(globvars['processes'][project])
-    logging.info(f"Project {project} started")
+    print(f"Project {project} started (pid {globvars['processes'][project].pid})")
     return make_response({'message':'Project started'}, 200)    
 
 @app.route('/stop', methods=['GET'])
@@ -288,13 +290,55 @@ def check_services():
     save_config(config)
     globvars['timer'] = 60
     
+_shutting_down = False
+
+def shutdown_all():
+    """Gracefully terminate all child processes, then the scheduler."""
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+
+    logging.info("Shutting down all services...")
+
+    # Stop the scheduler FIRST so it doesn't submit new jobs during shutdown
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:
+        pass
+
+    for project, proc in list(globvars['processes'].items()):
+        if proc.poll() is None:  # still running
+            logging.info("Stopping %s (pid %s)...", project, proc.pid)
+            proc.terminate()  # SIGTERM
+    # Give them a moment to exit cleanly
+    for project, proc in list(globvars['processes'].items()):
+        try:
+            proc.wait(timeout=5)
+            logging.info("%s stopped.", project)
+        except subprocess.TimeoutExpired:
+            logging.warning("%s did not stop in time, killing.", project)
+            proc.kill()
+            proc.wait()
+    globvars['processes'].clear()
+    logging.info("All services stopped.")
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGTERM/SIGINT so containers and manual kills clean up."""
+    shutdown_all()
+    os._exit(0)  # Force exit — sys.exit() gets caught by Flask
+
+
 scheduler = BackgroundScheduler()
 scheduler.add_job(check_services, 'interval', seconds=globvars['timer'], max_instances=10)
 scheduler.start()
 
+# Safety nets: clean up children on exit, SIGTERM, or Ctrl+C (SIGINT)
+atexit.register(shutdown_all)
+signal.signal(signal.SIGTERM, _signal_handler)
+signal.signal(signal.SIGINT, _signal_handler)
+
 if __name__ == '__main__':
-    try:
-        load_configurations()
-        app.run(port=8000, debug=False, host="0.0.0.0")
-    except (KeyboardInterrupt, SystemExit):
-        scheduler.shutdown()
+    load_configurations()
+    app.run(port=8000, debug=False, host="0.0.0.0")
