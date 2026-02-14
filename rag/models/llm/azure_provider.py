@@ -49,6 +49,10 @@ class AzureProvider(LLMProvider):
         cs = self._get_config_service()
         model = self.config.model_text
         embedding = self.config.embedding_model
+
+        # Ensure model name lists are populated
+        if not self._modelnames_ai and not self._modelnames_openai:
+            self.get_model_names()
         
         api_key = None
         model_api_version = None
