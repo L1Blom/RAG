@@ -1,4 +1,14 @@
-"""Azure LLM provider implementation."""
+"""Azure LLM provider implementation.
+
+Azure has two distinct sub-platforms, each with its own endpoint style:
+
+* **Azure OpenAI** – model endpoint = ``<base>/openai/deployments/<model>``
+  The INI stores the base (``model_endpoint``) and we append the model name.
+  Embedding endpoint is stored fully qualified in ``embedding_endpoint``.
+* **Azure AI** – model endpoint is already fully qualified in ``model_endpoint``.
+
+The INI sections are ``LLMS.AZURE.OPENAI`` and ``LLMS.AZURE.AI``.
+"""
 
 import os
 import logging
@@ -13,21 +23,12 @@ class AzureProvider(LLMProvider):
     """Azure provider implementation (supports both Azure OpenAI and Azure AI)."""
     
     def __init__(self, config, config_service: Optional[ConfigService] = None):
-        """
-        Initialize Azure provider.
-        
-        Args:
-            config: RAG configuration instance
-            config_service: Optional ConfigService for reading Azure-specific settings.
-                           If not provided, settings must be accessible via config.
-        """
         super().__init__(config)
         self._config_service = config_service
         self._modelnames_ai = []
         self._modelnames_openai = []
     
     def _get_config_service(self) -> ConfigService:
-        """Get the ConfigService, raising if not available."""
         if self._config_service is None:
             raise ValueError("ConfigService required for Azure provider")
         return self._config_service
@@ -35,17 +36,19 @@ class AzureProvider(LLMProvider):
     def get_model_names(self) -> Tuple[List[str], List[str]]:
         """Get available Azure models and embeddings from config."""
         cs = self._get_config_service()
-        
         self._modelnames_ai = cs.get_list('LLMS.AZURE.AI', 'models', default=[])
         self._modelnames_openai = cs.get_list('LLMS.AZURE.OPENAI', 'models', default=[])
         model_names = self._modelnames_ai + self._modelnames_openai
-        
         embedding_names = cs.get_list('LLMS.AZURE.OPENAI', 'embeddings', default=[])
-        
         return model_names, embedding_names
     
     def _get_azure_settings(self):
-        """Get Azure endpoint and credential settings."""
+        """Get Azure endpoint and credential settings.
+
+        Returns a tuple of:
+            (api_key, model_api_version, model_endpoint,
+             embedding_api_key, embedding_api_version, embedding_endpoint)
+        """
         cs = self._get_config_service()
         model = self.config.model_text
         embedding = self.config.embedding_model
@@ -61,6 +64,7 @@ class AzureProvider(LLMProvider):
         model_endpoint = None
         embedding_endpoint = None
         
+        # --- Chat model settings ---
         if model in self._modelnames_ai:
             api_key = os.environ.get('AZURE_AI_APIKEY')
             model_endpoint = cs.get_string('LLMS.AZURE.AI', 'model_endpoint')
@@ -68,18 +72,26 @@ class AzureProvider(LLMProvider):
         
         if model in self._modelnames_openai:
             api_key = os.environ.get('AZURE_OPENAI_APIKEY')
+            # Append model name to base endpoint, same as old code
             model_endpoint = cs.get_string('LLMS.AZURE.OPENAI', 'model_endpoint') + model
             model_api_version = cs.get_string('LLMS.AZURE.OPENAI', 'model_api_version')
         
-        # Embeddings always use Azure OpenAI
+        # --- Embedding settings (always Azure OpenAI) ---
         _, embedding_names = self.get_model_names()
         if embedding in embedding_names:
             embedding_api_key = os.environ.get('AZURE_OPENAI_APIKEY')
             embedding_api_version = cs.get_string('LLMS.AZURE.OPENAI', 'embedding_api_version')
+            # Append embedding model name to base endpoint
             embedding_endpoint = cs.get_string('LLMS.AZURE.OPENAI', 'embedding_endpoint') + embedding
         
         if api_key is None or model_endpoint is None:
-            raise ValueError("Azure API key or endpoint not found")
+            raise ValueError(
+                f"Azure API key or endpoint not found for model '{model}'. "
+                f"AI models: {self._modelnames_ai}, OpenAI models: {self._modelnames_openai}"
+            )
+        
+        logging.info("Azure model endpoint: %s", model_endpoint)
+        logging.info("Azure embedding endpoint: %s", embedding_endpoint)
         
         return (api_key, model_api_version, model_endpoint,
                 embedding_api_key, embedding_api_version, embedding_endpoint)
@@ -98,6 +110,7 @@ class AzureProvider(LLMProvider):
                 model_name=model
             )
         else:
+            logging.info("Model %s uses Azure OpenAI API", model)
             return AzureAIChatCompletionsModel(
                 endpoint=endpoint,
                 credential=api_key,
@@ -111,11 +124,11 @@ class AzureProvider(LLMProvider):
     
     def create_embeddings(self):
         """Create Azure embeddings."""
-        _, _, _, embedding_api_key, embedding_api_version, embedding_endpoint = self._get_azure_settings()
+        _, _, _, api_key, api_version, endpoint = self._get_azure_settings()
         
         return AzureAIEmbeddingsModel(
-            endpoint=embedding_endpoint,
-            credential=embedding_api_key,
+            endpoint=endpoint,
+            credential=api_key,
             model_name=self.config.embedding_model,
-            api_version=embedding_api_version
+            api_version=api_version
         )
