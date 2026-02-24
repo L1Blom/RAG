@@ -11,6 +11,7 @@ import uuid
 import base64
 import logging
 import pprint
+import time
 from pathlib import PurePath
 from urllib.request import urlopen
 from urllib.parse import quote
@@ -593,6 +594,10 @@ def upload_url(project):
 @cross_origin()
 def upload_x_url(project):
     """Add an X (Twitter) post URL to the context and vectorize it."""
+    config = _get_config()
+    base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
+    serve_files = os.path.normpath(os.path.join(base_dir, config.data_dir))
+    
     vector_store_svc = _get_service('VECTOR_STORE_SERVICE')
     
     if request.method == 'GET':
@@ -611,6 +616,15 @@ def upload_x_url(project):
     if not url.startswith('http'):
         url = 'https://' + url
     
+    # Save URL to urls.json (similar to uploadurl endpoint)
+    urls = _load_urls(serve_files)
+    if urls is None:
+        urls = []
+    urls.append(url)
+    urls_file = os.path.join(serve_files, 'urls.json')
+    with open(urls_file, 'w') as f:
+        json.dump(urls, f, indent=4)
+    
     try:
         count = vector_store_svc.load_x_urls([url])
         if count > 0:
@@ -621,6 +635,110 @@ def upload_x_url(project):
     except Exception as e:
         logging.error("Error loading X post: %s", e)
         return make_response(f"Error loading X post: {e}", 500)
+
+
+@rag_bp.route('/prompt/<project>/uploadx/batch', methods=['POST'])
+@cross_origin()
+def upload_x_urls_batch(project):
+    """Upload a file with a list of X (Twitter) URLs to process sequentially.
+    
+    Accepts a JSON file or text file with one URL per line.
+    Processes each URL with 2 seconds delay between requests.
+    """
+    config = _get_config()
+    base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
+    serve_files = os.path.normpath(os.path.join(base_dir, config.data_dir))
+    
+    vector_store_svc = _get_service('VECTOR_STORE_SERVICE')
+    
+    # Check if file was uploaded
+    if 'file' not in request.files:
+        return make_response("No file part in the request", 400)
+    
+    file = request.files['file']
+    if file.filename == '':
+        return make_response("No filename found in upload", 400)
+    
+    # Read URLs from file
+    try:
+        content = file.read().decode('utf-8')
+    except Exception as e:
+        return make_response(f"Error reading file: {e}", 400)
+    
+    # Try to parse as JSON first, then as plain text
+    try:
+        urls = json.loads(content)
+        if not isinstance(urls, list):
+            return make_response("JSON file must contain an array of URLs", 400)
+    except json.JSONDecodeError:
+        # Parse as plain text - one URL per line
+        urls = [line.strip() for line in content.strip().split('\n') if line.strip()]
+    
+    if not urls:
+        return make_response("No URLs found in file", 400)
+    
+    # Validate all URLs before processing
+    valid_urls = []
+    for url in urls:
+        if not url.startswith('http'):
+            url = 'https://' + url
+        if ('twitter.com' in url or 'x.com' in url) and '/status/' in url:
+            valid_urls.append(url)
+        else:
+            logging.warning("Skipping invalid X URL: %s", url)
+    
+    if not valid_urls:
+        return make_response("No valid X URLs found in file", 400)
+    
+    # Load existing URLs from urls.json
+    existing_urls = _load_urls(serve_files)
+    if existing_urls is None:
+        existing_urls = []
+    
+    # Process each URL with 2 second delay
+    results = {
+        'total': len(valid_urls),
+        'successful': 0,
+        'failed': 0,
+        'urls': []
+    }
+    
+    for url in valid_urls:
+        try:
+            # Add to urls.json
+            if url not in existing_urls:
+                existing_urls.append(url)
+            
+            # Process the URL
+            count = vector_store_svc.load_x_urls([url])
+            
+            if count > 0:
+                results['successful'] += 1
+                results['urls'].append({'url': url, 'chunks': count, 'status': 'success'})
+                logging.info("X post %s processed successfully (%d chunks)", url, count)
+            else:
+                results['failed'] += 1
+                results['urls'].append({'url': url, 'chunks': 0, 'status': 'failed'})
+                logging.warning("X post %s failed to process", url)
+            
+            # Wait 2 seconds between requests (skip for last one)
+            if url != valid_urls[-1]:
+                time.sleep(2)
+                
+        except Exception as e:
+            results['failed'] += 1
+            results['urls'].append({'url': url, 'error': str(e), 'status': 'error'})
+            logging.error("Error processing X post %s: %s", url, e)
+    
+    # Save all URLs to urls.json
+    urls_file = os.path.join(serve_files, 'urls.json')
+    with open(urls_file, 'w') as f:
+        json.dump(existing_urls, f, indent=4)
+    
+    return make_response(
+        f"Batch upload complete: {results['successful']} successful, {results['failed']} failed",
+        200
+    )
 
 
 # ---------------------------------------------------------------------------
