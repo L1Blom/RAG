@@ -589,6 +589,40 @@ def upload_url(project):
     return make_response('URL stored successfully', 200)
 
 
+@rag_bp.route('/prompt/<project>/uploadx', methods=['GET', 'POST'])
+@cross_origin()
+def upload_x_url(project):
+    """Add an X (Twitter) post URL to the context and vectorize it."""
+    vector_store_svc = _get_service('VECTOR_STORE_SERVICE')
+    
+    if request.method == 'GET':
+        url = request.values.get('url')
+    else:
+        url = request.form.get('url')
+    
+    if not url:
+        return make_response("URL parameter is required", 400)
+    
+    # Validate X URL pattern - twitter.com or x.com
+    if not ('twitter.com' in url or 'x.com' in url) or '/status/' not in url:
+        return make_response("Invalid X URL format. Expected: https://twitter.com/user/status/123 or https://x.com/user/status/123", 400)
+    
+    # Ensure URL has https prefix
+    if not url.startswith('http'):
+        url = 'https://' + url
+    
+    try:
+        count = vector_store_svc.load_x_urls([url])
+        if count > 0:
+            logging.info("X post %s stored and vectorized successfully", url)
+            return make_response(f'X post stored successfully ({count} chunks)', 200)
+        else:
+            return make_response("Failed to fetch or process X post", 500)
+    except Exception as e:
+        logging.error("Error loading X post: %s", e)
+        return make_response(f"Error loading X post: {e}", 500)
+
+
 # ---------------------------------------------------------------------------
 # Image processing
 # ---------------------------------------------------------------------------

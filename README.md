@@ -118,6 +118,22 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
     Uploads the file to the directory DATA_DIR, only if the extension is listed in DATA_GLOB_*
     If not, results in http 500 error (non-fatal)
 
+
+13. /prompt/\<ID\>/uploadx
+
+    Parameters: url (string) - X (Twitter) post URL
+
+    Fetches an X post via the X API v2 and vectorizes it for RAG context.
+    
+    Supported URL formats:
+    - https://x.com/username/status/1234567890
+    - https://twitter.com/username/status/1234567890
+    
+    Requires X API Bearer Token to be set in environment variable:
+    - X_API_KEY or TWITTER_BEARER_TOKEN
+
+    Get your API key from: https://developer.x.com/
+
 ## Usage
 
 ```bash
@@ -182,6 +198,7 @@ INFO:root:path -> /prompt/_unittest/file file
 INFO:root:path -> /prompt/_unittest/context file,action
 INFO:root:path -> /prompt/_unittest/image image,prompt
 INFO:root:path -> /prompt/_unittest/upload 
+INFO:root:path -> /prompt/_unittest/uploadx url
 INFO:chromadb.telemetry.product.posthog:Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
 INFO:root:Loaded 8 chunks from persistent vectorstore
 INFO:root:Chain initialized: gpt-4o
