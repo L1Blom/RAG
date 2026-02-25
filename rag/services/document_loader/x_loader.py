@@ -112,11 +112,12 @@ class XLoaderStrategy:
         
         return None
     
-    def _tweet_to_document(self, tweet_data: Dict[str, Any]) -> Document:
+    def _tweet_to_document(self, tweet_data: Dict[str, Any], url: str = '') -> Document:
         """Convert tweet data to a LangChain Document.
         
         Args:
             tweet_data: Tweet data from X API
+            url: Original X URL (optional)
             
         Returns:
             LangChain Document
@@ -151,6 +152,10 @@ class XLoaderStrategy:
         if created_at:
             text_parts.append(f"Posted: {created_at}")
         
+        # X post link
+        post_url = url if url else f"https://x.com/{author_username}/status/{tweet.get('id', '')}"
+        text_parts.append(f"Original post: {post_url}")
+        
         # Build metadata
         metadata = {
             'source': 'x',
@@ -159,6 +164,7 @@ class XLoaderStrategy:
             'author_username': author_username,
             'author_name': author_name,
             'created_at': created_at,
+            'post_url': post_url,
             'retweet_count': metrics.get('retweet_count', 0),
             'like_count': metrics.get('like_count', 0),
             'reply_count': metrics.get('reply_count', 0),
@@ -216,7 +222,7 @@ class XLoaderStrategy:
                 continue
             
             try:
-                doc = self._tweet_to_document(tweet_data)
+                doc = self._tweet_to_document(tweet_data, url)
                 documents.append(doc)
                 logging.info(f"Loaded tweet {tweet_id} from {url}")
             except Exception as e:
