@@ -13,6 +13,7 @@ from urllib.parse import urlparse, parse_qs
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores.utils import filter_complex_metadata
 
 
 class XLoaderStrategy:
@@ -229,6 +230,8 @@ class XLoaderStrategy:
         splits = text_splitter.split_documents(documents)
         
         if splits:
+            # Filter complex metadata (removes None values and complex types like dicts/lists)
+            splits = filter_complex_metadata(splits)
             vectorstore.add_documents(splits)
             logging.info(f"Loaded {len(splits)} X document splits into vector store")
             return len(splits)
