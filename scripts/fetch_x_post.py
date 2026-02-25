@@ -5,20 +5,23 @@ Usage:
     python scripts/fetch_x_post.py <x_url> [-o output_dir]
     python scripts/fetch_x_post.py --file urls.txt [-o output_dir]
 
-Environment:
-    X_API_KEY or TWITTER_BEARER_TOKEN: API key for X/Twitter API v2
+The script reads X_API_KEY from env/config.env (or environment variable).
 """
 
 import argparse
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from dotenv import load_dotenv
 from rag.services.document_loader.x_loader import XLoaderStrategy
+
+# Load environment from env/config.env
+load_dotenv('env/config.env')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -148,10 +151,10 @@ def main():
         parser.print_help()
         sys.exit(1)
     
-    # Check API key
+    # Check API key (loaded from env/config.env)
     api_key = os.environ.get('X_API_KEY') or os.environ.get('TWITTER_BEARER_TOKEN')
     if not api_key:
-        logger.error("X_API_KEY or TWITTER_BEARER_TOKEN environment variable not set")
+        logger.error("X_API_KEY not found in env/config.env or environment")
         sys.exit(1)
     
     # Create output directory
