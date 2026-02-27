@@ -156,19 +156,19 @@ def main():
     project = sys.argv[1]
     app = create_app(project)
 
-    # Optionally try to get port from a config server
+    # Always use port from ini file (rag_config)
     config_service = app.config['CONFIG_SERVICE']
     rag_config = app.config['RAG_CONFIG']
     port = rag_config.port
     debug = False
 
+    # Optionally log what the config server would return, but do not override the port
     try:
         config_host = config_service.get_string('DEFAULT', 'config_server', default='')
         if config_host:
             response = urlopen(config_host + "/get?project=" + project)
             configs = json.loads(response.read().decode('utf-8'))
-            port = int(configs['port'])
-            logging.info("Port found at config server: %s", port)
+            logging.info("Config server port for project %s would be: %s (IGNORED, using ini file)", project, configs.get('port'))
     except Exception as e:
         logging.error("Failed to get port from config server: %s", e)
         logging.info("Using port from constants file: %s", port)

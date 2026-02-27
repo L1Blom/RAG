@@ -138,6 +138,8 @@ def load_configurations():
         llms = rc['LLMS']['use_llm']
         config[project]['llm'] = rc['LLMS.'+llms]['modeltext']
         save_config(config)
+        port = config[project].get('port', 'unknown')
+        logging.info(f"Starting subprocess for project {project} on port {port}")
         globvars['processes'][project] = subprocess.Popen(
             ['python', 'ragservice.py', project], 
             env=os.environ,
@@ -146,13 +148,16 @@ def load_configurations():
             bufsize=1,
             universal_newlines=True)
         read_process_output(globvars['processes'][project])
-        print(f"Project {project} started (pid {globvars['processes'][project].pid})")
+        print(f"Project {project} started (pid {globvars['processes'][project].pid}) on port {port}")
 
 
 @app.route('/start', methods=['GET'])
 @cross_origin()
 def start():
     project = request.args.get('project')
+    config = load_config()
+    port = config.get(project, {}).get('port', 'unknown')
+    logging.info(f"Starting subprocess for project {project} on port {port}")
     globvars['processes'][project] = subprocess.Popen(
         ['python', 'ragservice.py', project], 
         env=os.environ,
@@ -161,7 +166,7 @@ def start():
         bufsize=1,
         universal_newlines=True)
     read_process_output(globvars['processes'][project])
-    print(f"Project {project} started (pid {globvars['processes'][project].pid})")
+    print(f"Project {project} started (pid {globvars['processes'][project].pid}) on port {port}")
     return make_response({'message':'Project started'}, 200)    
 
 @app.route('/stop', methods=['GET'])
