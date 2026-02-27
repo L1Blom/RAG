@@ -9,6 +9,7 @@ from .html_loader import HTMLLoaderStrategy
 from .word_loader import WordLoaderStrategy
 from .powerpoint_loader import PowerPointLoaderStrategy
 from .excel_loader import ExcelLoaderStrategy
+from .x_loader import XLoaderStrategy
 
 
 class DocumentLoaderRegistry:
@@ -23,6 +24,7 @@ class DocumentLoaderRegistry:
             'docx': WordLoaderStrategy(),
             'pptx': PowerPointLoaderStrategy(),
             'xlsx': ExcelLoaderStrategy(),
+            'x': XLoaderStrategy(),
         }
     
     def load_documents(

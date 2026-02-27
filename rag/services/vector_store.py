@@ -1,7 +1,7 @@
 """Vector store management service."""
 
 import logging
-from typing import Optional
+from typing import Optional, List
 from langchain_chroma import Chroma
 import chromadb
 from rag.models.config_models import RAGConfig
@@ -113,3 +113,29 @@ class VectorStoreService:
     def reset(self) -> None:
         """Reset vector store instance."""
         self._vectorstore = None
+    
+    def load_x_urls(self, x_urls: List[str]) -> int:
+        """
+        Load X (Twitter) posts into vector store.
+        
+        Args:
+            x_urls: List of X post URLs to load
+            
+        Returns:
+            Number of document splits loaded
+        """
+        from rag.services.document_loader.x_loader import get_x_loader
+        
+        logging.info(f"Loading {len(x_urls)} X posts into vector store")
+        
+        config_dict = {
+            'x_urls': x_urls,
+            'chunk_size': self.config.chunk_size,
+            'chunk_overlap': self.config.chunk_overlap,
+        }
+        
+        x_loader = get_x_loader()
+        count = x_loader.load(config_dict, self.vectorstore)
+        
+        logging.info(f"Loaded {count} X document splits")
+        return count
