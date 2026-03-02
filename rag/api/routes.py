@@ -31,6 +31,7 @@ from langchain_openai import ChatOpenAI
 from rag.models.response_models import success_response, error_response
 from rag.utils.exceptions import RAGException, ValidationError
 from rag.utils.security import allowed_file, validate_path
+from rag.services.document_loader.x_loader import XLoaderError
 
 
 # Create blueprint
@@ -702,6 +703,7 @@ def upload_x_urls_batch(project):
         'failed': 0,
         'urls': []
     }
+    errors = []
     
     for url in valid_urls:
         try:
@@ -719,7 +721,9 @@ def upload_x_urls_batch(project):
             else:
                 results['failed'] += 1
                 results['urls'].append({'url': url, 'chunks': 0, 'status': 'failed'})
-                logging.warning("X post %s failed to process", url)
+                error_msg = f"X post {url} failed to process"
+                errors.append(error_msg)
+                logging.warning(error_msg)
             
             # Wait 2 seconds between requests (skip for last one)
             if url != valid_urls[-1]:
@@ -728,7 +732,17 @@ def upload_x_urls_batch(project):
         except Exception as e:
             results['failed'] += 1
             results['urls'].append({'url': url, 'error': str(e), 'status': 'error'})
-            logging.error("Error processing X post %s: %s", url, e)
+            error_msg = f"Error processing X post {url}: {e}"
+            errors.append(error_msg)
+            logging.error(error_msg)
+    
+    # Detailed error logging
+    error_summary = "; ".join(errors) if errors else "Unknown error"
+    logging.error(f"X loader error summary: {error_summary}")
+    
+    # Raise exception for single URL with errors
+    if len(valid_urls) == 1 and errors:
+        raise XLoaderError(errors[0])
     
     # Save all URLs to urls.json
     urls_file = os.path.join(serve_files, 'urls.json')

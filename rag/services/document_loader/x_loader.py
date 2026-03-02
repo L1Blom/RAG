@@ -16,6 +16,14 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.utils import filter_complex_metadata
 
 
+class XLoaderError(Exception):
+    """Exception raised for X loader errors."""
+    
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
+
+
 class XLoaderStrategy:
     """Strategy for loading X (Twitter) posts into vector store."""
     

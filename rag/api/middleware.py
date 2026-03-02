@@ -40,9 +40,10 @@ def setup_middleware(app: Flask) -> None:
 
     @app.errorhandler(Exception)
     def handle_exception(e):
-        """Handle unexpected exceptions."""
+        """Handle unexpected exceptions with detailed error message."""
         logging.error("Unexpected error: %s", e, exc_info=True)
-        return error_response("Internal server error", 500)
+        # Return the actual error message for debugging
+        return error_response(str(e), 500)
 
     @app.teardown_request
     def log_unhandled(e):

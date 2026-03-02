@@ -6,6 +6,7 @@ from langchain_chroma import Chroma
 import chromadb
 from rag.models.config_models import RAGConfig
 from rag.services.embeddings import EmbeddingsService
+from rag.services.document_loader.x_loader import get_x_loader, XLoaderError
 from rag.services.document_loader.registry import DocumentLoaderRegistry
 
 
@@ -123,6 +124,9 @@ class VectorStoreService:
             
         Returns:
             Number of document splits loaded
+            
+        Raises:
+            XLoaderError: If there's an error fetching tweets (propagated from loader)
         """
         from rag.services.document_loader.x_loader import get_x_loader
         

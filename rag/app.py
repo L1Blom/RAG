@@ -167,8 +167,9 @@ def main():
         if config_host:
             response = urlopen(config_host + "/get?project=" + project)
             configs = json.loads(response.read().decode('utf-8'))
-            port = int(configs['port'])
-            logging.info("Port found at config server: %s", port)
+            config_server_port = configs.get('port')
+            if config_server_port:
+                logging.info("Config server port %s - IGNORED, using ini file", config_server_port)
     except Exception as e:
         logging.error("Failed to get port from config server: %s", e)
         logging.info("Using port from constants file: %s", port)
