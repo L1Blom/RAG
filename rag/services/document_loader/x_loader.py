@@ -112,8 +112,10 @@ class XLoaderStrategy:
                 logging.error("X API authentication failed. Check your API key.")
             elif response.status_code == 404:
                 logging.error(f"Tweet {tweet_id} not found.")
+            elif response.status_code == 429:
+                logging.error(f"X API rate limit exceeded. Response: {response.text}")
             else:
-                logging.error(f"X API error: {response.status_code} - {response.text}")
+                logging.error(f"X API error: {response.status_code} - {response.text[:500]}")
                 
         except requests.RequestException as e:
             logging.error(f"Error fetching tweet from X API: {e}")
@@ -226,7 +228,7 @@ class XLoaderStrategy:
             
             tweet_data = self._fetch_tweet(tweet_id)
             if not tweet_data:
-                logging.warning(f"Failed to fetch tweet: {url}")
+                logging.warning(f"Failed to fetch tweet: {url} (ID: {tweet_id})")
                 continue
             
             try:

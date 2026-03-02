@@ -737,8 +737,12 @@ def upload_x_urls_batch(project):
             logging.error(error_msg)
     
     # Detailed error logging
-    error_summary = "; ".join(errors) if errors else "Unknown error"
-    logging.error(f"X loader error summary: {error_summary}")
+    if errors:
+        error_summary = "; ".join(errors)
+        logging.error(f"X loader error summary: {error_summary}")
+    else:
+        # This shouldn't happen if we reach here with failed count > 0
+        logging.warning(f"X loader completed with {results['successful']} successful and {results['failed']} failed, but no error messages were captured")
     
     # Raise exception for single URL with errors
     if len(valid_urls) == 1 and errors:
