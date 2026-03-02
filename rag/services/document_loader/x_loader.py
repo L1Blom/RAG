@@ -106,8 +106,17 @@ class XLoaderStrategy:
                 timeout=30
             )
             
+            # Debug: log response status and first part of response
+            logging.debug(f"X API response status: {response.status_code}")
+            logging.debug(f"X API response headers: {response.headers.get('content-type')}")
+            
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                # Check if response contains actual tweet data or error
+                if 'data' not in data:
+                    logging.error(f"X API returned 200 but no 'data' field: {str(data)[:500]}")
+                    return None
+                return data
             elif response.status_code == 401:
                 logging.error("X API authentication failed. Check your API key.")
             elif response.status_code == 404:
