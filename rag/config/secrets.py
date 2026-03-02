@@ -62,7 +62,9 @@ class SecretsManager:
             'OPENAI_APIKEY',
             'OLLAMA_APIKEY',
             'GROQ_APIKEY',
-            'NEBUL_APIKEY'
+            'NEBUL_APIKEY',
+            'X_API_KEY',
+            'TWITTER_BEARER_TOKEN'
         ]
         
         for key in secret_keys:
