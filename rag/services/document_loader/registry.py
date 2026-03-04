@@ -48,7 +48,11 @@ class DocumentLoaderRegistry:
             total = 0
             for loader_type, loader in self._loaders.items():
                 try:
-                    loader_config = {**config, 'glob': f'**/*.{loader_type}'}
+                    # Special handling for X loader - load x.json instead of *.x files
+                    if loader_type == 'x':
+                        loader_config = {**config, 'glob': '**/x.json'}
+                    else:
+                        loader_config = {**config, 'glob': f'**/*.{loader_type}'}
                     count = loader.load(loader_config, vectorstore)
                     total += count
                 except Exception as e:

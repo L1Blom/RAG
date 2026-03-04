@@ -7,6 +7,7 @@ documents for vectorization.
 import logging
 import os
 import re
+import json
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse, parse_qs
 
@@ -61,27 +62,32 @@ class XLoaderStrategy:
             Tweet ID if found, None otherwise
         """
         # Match twitter.com/user/status/ID or x.com/user/status/ID
+        # Strip query parameters before matching (e.g., ?s=46)
+        url_without_params = url.split('?')[0] if '?' in url else url
         pattern = r'(?:twitter|x)\.com/\w+/status/(\d+)'
-        match = re.search(pattern, url)
+        match = re.search(pattern, url_without_params)
         if match:
             return match.group(1)
         return None
     
     def _is_x_url(self, url: str) -> bool:
         """Check if URL is a valid X/Twitter post URL."""
-        return any(re.search(pattern, url, re.IGNORECASE) 
+        # Strip query parameters before matching
+        url_without_params = url.split('?')[0] if '?' in url else url
+        return any(re.search(pattern, url_without_params, re.IGNORECASE) 
                    for pattern in self.URL_PATTERNS)
     
-    def _fetch_tweet(self, tweet_id: str) -> Optional[Dict[str, Any]]:
+    def _fetch_tweet(self, tweet_id: str, max_retries: int = 3) -> Optional[Dict[str, Any]]:
         """Fetch tweet data from X API v2.
         
         Args:
             tweet_id: The tweet ID to fetch
+            max_retries: Maximum number of retry attempts for rate limits
             
         Returns:
             Tweet data dict or None if failed
         """
-        import requests
+        import time
         
         if not self.api_token:
             logging.error("X API token not configured. Set X_API_KEY environment variable.")
@@ -98,37 +104,48 @@ class XLoaderStrategy:
             "user.fields": "username,name,description"
         }
         
-        try:
-            response = requests.get(
-                f"{self._api_base_url}/{tweet_id}",
-                headers=headers,
-                params=params,
-                timeout=30
-            )
-            
-            # Debug: log response status and first part of response
-            logging.debug(f"X API response status: {response.status_code}")
-            logging.debug(f"X API response headers: {response.headers.get('content-type')}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                # Check if response contains actual tweet data or error
-                if 'data' not in data:
-                    logging.error(f"X API returned 200 but no 'data' field: {str(data)[:500]}")
-                    return None
-                return data
-            elif response.status_code == 401:
-                logging.error("X API authentication failed. Check your API key.")
-            elif response.status_code == 404:
-                logging.error(f"Tweet {tweet_id} not found.")
-            elif response.status_code == 429:
-                logging.error(f"X API rate limit exceeded. Response: {response.text}")
-            else:
-                logging.error(f"X API error: {response.status_code} - {response.text[:500]}")
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(
+                    f"{self._api_base_url}/{tweet_id}",
+                    headers=headers,
+                    params=params,
+                    timeout=30
+                )
                 
-        except requests.RequestException as e:
-            logging.error(f"Error fetching tweet from X API: {e}")
+                # Debug: log response status and first part of response
+                logging.debug(f"X API response status: {response.status_code}")
+                logging.debug(f"X API response headers: {response.headers.get('content-type')}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Check if response contains actual tweet data or error
+                    if 'data' not in data:
+                        logging.error(f"X API returned 200 but no 'data' field: {str(data)[:500]}")
+                        return None
+                    return data
+                elif response.status_code == 401:
+                    logging.error("X API authentication failed. Check your API key.")
+                    return None
+                elif response.status_code == 404:
+                    logging.error(f"Tweet {tweet_id} not found.")
+                    return None
+                elif response.status_code == 429:
+                    # Rate limited - exponential backoff
+                    wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
+                    logging.warning(f"X API rate limit exceeded. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logging.error(f"X API error: {response.status_code} - {response.text[:500]}")
+                    return None
+                    
+            except requests.RequestException as e:
+                logging.error(f"Error fetching tweet from X API: {e}")
+                return None
         
+        # All retries exhausted
+        logging.error(f"Failed to fetch tweet {tweet_id} after {max_retries} attempts due to rate limiting")
         return None
     
     def _tweet_to_document(self, tweet_data: Dict[str, Any], url: str = '') -> Document:
@@ -196,9 +213,12 @@ class XLoaderStrategy:
     def load(self, config: Dict[str, Any], vectorstore: Chroma) -> int:
         """Load X posts into vector store.
         
+        Loads from x.json file in data directory, or from x_urls config key.
+        
         Args:
             config: Configuration dictionary containing:
-                - x_urls: List of X URLs to load
+                - data_dir: Directory containing x.json (optional)
+                - x_urls: List of X URLs to load (optional, overrides x.json)
                 - chunk_size: Size of text chunks
                 - chunk_overlap: Overlap between chunks
             vectorstore: Vector store to add documents to
@@ -206,7 +226,12 @@ class XLoaderStrategy:
         Returns:
             Number of document splits loaded
         """
+        # Try to get URLs from config or from x.json file
         x_urls = config.get('x_urls', [])
+        
+        if not x_urls:
+            # Try loading from x.json file
+            x_urls = self._load_x_urls(config.get('data_dir', ''))
         
         if not x_urls:
             logging.info("No X URLs provided to load")
@@ -263,6 +288,34 @@ class XLoaderStrategy:
         
         return 0
     
+    def _load_x_urls(self, data_dir: str) -> Optional[List[str]]:
+        """Load X URLs from x.json file in data directory.
+        
+        Args:
+            data_dir: Directory containing x.json
+            
+        Returns:
+            List of X URLs or None if file not found
+        """
+        x_urls_file = os.path.join(data_dir, 'x.json')
+        if not os.path.exists(x_urls_file):
+            return None
+        
+        try:
+            with open(x_urls_file, 'r') as file:
+                contents = file.read()
+                if contents.strip() == "":
+                    return []
+                contents = json.loads(contents)
+                if not isinstance(contents, list):
+                    logging.error("x.json file does not contain a list")
+                    return None
+                logging.info("Found %d X URLs in x.json", len(contents))
+                return contents
+        except json.JSONDecodeError as e:
+            logging.error("Error reading x.json file: %s", e)
+            return None
+
     def load_single(self, url: str, config: Dict[str, Any], vectorstore: Chroma) -> int:
         """Load a single X post into vector store.
         

@@ -93,11 +93,12 @@ def initialize_chain(new_vectorstore: bool = False) -> bool:
     state['NoChunks'] = vectorstore._collection.count()
 
     search_type = config_service.get_string('DEFAULT', 'search_type', default='similarity_score_threshold')
+    retriever_k = getattr(config, 'similar', 8)  # Use config's similar value, default to 8
     retriever = vectorstore.as_retriever(
         search_type=search_type,
         search_kwargs={
             'score_threshold': config.score,
-            'k': 8
+            'k': retriever_k
         }
     )
 
@@ -617,14 +618,26 @@ def upload_x_url(project):
     if not url.startswith('http'):
         url = 'https://' + url
     
-    # Save URL to urls.json (similar to uploadurl endpoint)
-    urls = _load_urls(serve_files)
-    if urls is None:
-        urls = []
-    urls.append(url)
-    urls_file = os.path.join(serve_files, 'urls.json')
-    with open(urls_file, 'w') as f:
-        json.dump(urls, f, indent=4)
+    # Save URL to x.json (X loader expects x.json)
+    x_urls_file = os.path.join(serve_files, 'x.json')
+    
+    # Load existing X URLs or create new list
+    existing_x_urls = []
+    if os.path.exists(x_urls_file):
+        try:
+            with open(x_urls_file, 'r') as f:
+                existing_x_urls = json.load(f)
+                if not isinstance(existing_x_urls, list):
+                    existing_x_urls = []
+        except (json.JSONDecodeError, IOError):
+            existing_x_urls = []
+    
+    # Add new URL if not already present
+    if url not in existing_x_urls:
+        existing_x_urls.append(url)
+    
+    with open(x_urls_file, 'w') as f:
+        json.dump(existing_x_urls, f, indent=4)
     
     try:
         count = vector_store_svc.load_x_urls([url])
@@ -691,10 +704,17 @@ def upload_x_urls_batch(project):
     if not valid_urls:
         return make_response("No valid X URLs found in file", 400)
     
-    # Load existing URLs from urls.json
-    existing_urls = _load_urls(serve_files)
-    if existing_urls is None:
-        existing_urls = []
+    # Load existing X URLs from x.json
+    x_urls_file = os.path.join(serve_files, 'x.json')
+    existing_x_urls = []
+    if os.path.exists(x_urls_file):
+        try:
+            with open(x_urls_file, 'r') as f:
+                existing_x_urls = json.load(f)
+                if not isinstance(existing_x_urls, list):
+                    existing_x_urls = []
+        except (json.JSONDecodeError, IOError):
+            existing_x_urls = []
     
     # Process each URL with 2 second delay
     results = {
@@ -707,9 +727,13 @@ def upload_x_urls_batch(project):
     
     for url in valid_urls:
         try:
-            # Add to urls.json
-            if url not in existing_urls:
-                existing_urls.append(url)
+            # Add to x.json
+            if url not in existing_x_urls:
+                existing_x_urls.append(url)
+            
+            # Save updated x.json
+            with open(x_urls_file, 'w') as f:
+                json.dump(existing_x_urls, f, indent=4)
             
             # Process the URL
             count = vector_store_svc.load_x_urls([url])
@@ -724,10 +748,6 @@ def upload_x_urls_batch(project):
                 error_msg = f"X post {url} failed to process"
                 errors.append(error_msg)
                 logging.warning(error_msg)
-            
-            # Wait 2 seconds between requests (skip for last one)
-            if url != valid_urls[-1]:
-                time.sleep(2)
                 
         except Exception as e:
             results['failed'] += 1
@@ -748,10 +768,9 @@ def upload_x_urls_batch(project):
     if len(valid_urls) == 1 and errors:
         raise XLoaderError(errors[0])
     
-    # Save all URLs to urls.json
-    urls_file = os.path.join(serve_files, 'urls.json')
-    with open(urls_file, 'w') as f:
-        json.dump(existing_urls, f, indent=4)
+    # Save all URLs to x.json
+    with open(x_urls_file, 'w') as f:
+        json.dump(existing_x_urls, f, indent=4)
     
     return make_response(
         f"Batch upload complete: {results['successful']} successful, {results['failed']} failed",
