@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import json
+import requests
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse, parse_qs
 
