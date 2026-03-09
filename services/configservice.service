@@ -1,0 +1,14 @@
+[Unit]
+Description=Config Service for RAG
+After=network.target wsl.service
+
+[Service]
+Type=simple
+User=leen
+WorkingDirectory=/home/leen/projects/RAG
+Environment="PATH=/home/leen/projects/RAG/myragenv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/leen/projects/RAG/myragenv/bin/python /home/leen/projects/RAG/configservice.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
