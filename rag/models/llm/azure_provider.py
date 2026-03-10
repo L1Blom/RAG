@@ -96,10 +96,11 @@ class AzureProvider(LLMProvider):
         return (api_key, model_api_version, model_endpoint,
                 embedding_api_key, embedding_api_version, embedding_endpoint)
     
-    def create_chat_model(self, temperature: Optional[float] = None):
+    def create_chat_model(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
         """Create Azure chat model."""
         api_key, api_version, endpoint, _, _, _ = self._get_azure_settings()
         temp = temperature if temperature is not None else self.config.temperature
+        max_t = max_tokens if max_tokens is not None else self.config.max_tokens
         model = self.config.model_text
         
         if model in self._modelnames_ai:
@@ -116,7 +117,7 @@ class AzureProvider(LLMProvider):
                 credential=api_key,
                 temperature=temp,
                 model_name=model,
-                max_completion_tokens=int(self.config.max_tokens),
+                max_completion_tokens=int(max_t),
                 verbose=True,
                 api_version=api_version,
                 client_kwargs={"logging_enable": True}

@@ -38,18 +38,20 @@ class OpenAIProvider(LLMProvider):
         
         return model_names, embedding_names
     
-    def create_chat_model(self, temperature: Optional[float] = None):
+    def create_chat_model(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
         """Create OpenAI chat model."""
         api_key = os.environ.get('OPENAI_APIKEY')
         if not api_key:
             raise ValueError("OPENAI_APIKEY not found in environment")
         
         temp = temperature if temperature is not None else self.config.temperature
+        max_t = max_tokens if max_tokens is not None else self.config.max_tokens
         
         return ChatOpenAI(
             api_key=api_key,
             model=self.config.model_text,
             temperature=temp,
+            max_tokens=max_t,
             verbose=True
         )
     

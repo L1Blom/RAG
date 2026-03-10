@@ -150,17 +150,19 @@ class NebulProvider(LLMProvider):
             # Fall back to config file
             return self._get_config_models()
     
-    def create_chat_model(self, temperature: Optional[float] = None):
+    def create_chat_model(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
         """Create Nebul chat model via OpenAI-compatible API."""
         api_key = self._get_api_key()
         base_url = self._get_base_url()
         temp = temperature if temperature is not None else self.config.temperature
+        max_t = max_tokens if max_tokens is not None else self.config.max_tokens
         
         return ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
             model=self.config.model_text,
             temperature=temp,
+            max_tokens=max_t,
             verbose=True
         )
     

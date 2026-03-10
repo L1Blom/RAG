@@ -38,12 +38,13 @@ def _set_chat_model(config: RAGConfig, config_service: ConfigService, state: dic
     stored in ``state['set_chat_model']`` so that route handlers can call it
     when the user changes the model or temperature at runtime.
     """
-    def _inner(temperature=None):
+    def _inner(temperature=None, max_tokens=None):
         temp = temperature if temperature is not None else config.temperature
+        max_t = max_tokens if max_tokens is not None else config.max_tokens
         provider = ProviderFactory.get_provider(
             config.use_llm, config, config_service=config_service
         )
-        state['LLM'] = provider.create_chat_model(temp)
+        state['LLM'] = provider.create_chat_model(temp, max_t)
 
     return _inner
 
@@ -126,7 +127,7 @@ def create_app(project: str) -> Flask:
     # Create the set_chat_model helper and call it once
     set_chat = _set_chat_model(rag_config, config_service, state)
     state['set_chat_model'] = set_chat
-    set_chat(rag_config.temperature)
+    set_chat(rag_config.temperature, rag_config.max_tokens)
 
     # ── Store everything in app.config so routes can access it ───────────
     app.config['RAG_CONFIG'] = rag_config

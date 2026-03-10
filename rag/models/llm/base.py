@@ -28,13 +28,14 @@ class LLMProvider(ABC):
         pass
     
     @abstractmethod
-    def create_chat_model(self, temperature: Optional[float] = None):
+    def create_chat_model(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
         """
         Create a chat model instance.
         
         Args:
             temperature: Optional temperature override
-            
+            max_tokens: Optional max tokens override
+        
         Returns:
             LangChain chat model instance
         """

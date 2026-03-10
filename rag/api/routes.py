@@ -318,7 +318,7 @@ def set_model(project):
         _log_error(f"Model {this_model} not found in available models")
 
     config.model_text = this_model
-    state['set_chat_model'](config.temperature)
+    state['set_chat_model'](config.temperature, config.max_tokens)
     initialize_chain(True)
     return make_response(f'Model set to {this_model}', 200)
 
@@ -341,7 +341,7 @@ def set_embeddings(project):
         _log_error(f"Embedding {this_embedding} not found in available models")
 
     config.embedding_model = this_embedding
-    state['set_chat_model'](config.temperature)
+    state['set_chat_model'](config.temperature, config.max_tokens)
     initialize_chain(True)
     return make_response(f'Embedding set to {this_embedding}', 200)
 
@@ -384,7 +384,7 @@ def set_temperature(project):
         _log_error(f"Temperature {temperature} not between 0.0 and 2.0")
 
     config.temperature = temperature
-    state['set_chat_model'](temperature)
+    state['set_chat_model'](temperature, config.max_tokens)
     initialize_chain(True)
     return make_response(f'Temperature set to {temperature}', 200)
 
@@ -402,6 +402,26 @@ def set_system_prompt(project):
     state['Prompt'] = new_prompt
     initialize_chain(True)
     return make_response(f'System prompt set to {new_prompt}', 200)
+
+
+@rag_bp.route('/prompt/<project>/maxtokens', methods=['GET', 'POST'])
+@cross_origin()
+def set_max_tokens(project):
+    """Set the maximum tokens."""
+    state = _get_state()
+    config = _get_config()
+    if request.method == 'GET':
+        max_tokens = int(request.values.get('maxtokens'))
+    else:
+        max_tokens = int(request.form.get('maxtokens'))
+
+    if max_tokens < 1 or max_tokens > 8192:
+        _log_error(f"Max tokens {max_tokens} not between 1 and 8192")
+
+    config.max_tokens = max_tokens
+    state['set_chat_model'](config.temperature, max_tokens)
+    initialize_chain(True)
+    return make_response(f'Max tokens set to {max_tokens}', 200)
 
 
 # ---------------------------------------------------------------------------

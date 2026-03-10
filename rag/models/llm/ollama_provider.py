@@ -35,7 +35,7 @@ class OllamaProvider(LLMProvider):
         
         return model_names, embedding_names
     
-    def create_chat_model(self, temperature: Optional[float] = None):
+    def create_chat_model(self, temperature: Optional[float] = None, max_tokens: Optional[int] = None):
         """Create Ollama chat model."""
         return Ollama(model=self.config.model_text)
     
