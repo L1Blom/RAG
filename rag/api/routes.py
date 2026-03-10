@@ -432,7 +432,8 @@ def set_max_tokens(project):
 @cross_origin()
 def reload(project):
     """Reload documents into the vector store."""
-    initialize_chain(True)
+    vector_store_svc = _get_service('VECTOR_STORE_SERVICE')
+    vector_store_svc.rebuild_documents()
     return make_response('Documents reloaded', 200)
 
 

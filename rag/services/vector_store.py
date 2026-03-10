@@ -66,6 +66,31 @@ class VectorStoreService:
             Number of document splits loaded
         """
         return self._reload_into(self.vectorstore, file_type)
+
+    def clear_vectorstore(self) -> None:
+        """Clear the persisted vectorstore collection and reset the instance."""
+        collection_name = 'langchain'
+        if self._vectorstore is not None and getattr(self._vectorstore, '_collection', None) is not None:
+            collection_name = self._vectorstore._collection.name
+
+        try:
+            client = chromadb.PersistentClient(path=self.config.persistence_dir)
+            client.delete_collection(name=collection_name)
+            logging.info("Cleared vectorstore collection '%s'", collection_name)
+        except Exception as exc:
+            # Missing collection is non-fatal for rebuild workflows.
+            logging.warning("Could not delete vectorstore collection '%s': %s", collection_name, exc)
+
+        self._vectorstore = None
+
+    def rebuild_documents(self, file_type: str = 'all') -> int:
+        """Clear and rebuild the vector store from source documents."""
+        self.clear_vectorstore()
+        self._vectorstore = Chroma(
+            persist_directory=self.config.persistence_dir,
+            embedding_function=self.embeddings_service.embeddings
+        )
+        return self._reload_into(self._vectorstore, file_type)
     
     def _reload_into(self, vectorstore: Chroma, file_type: str = 'all') -> int:
         """
@@ -134,8 +159,11 @@ class VectorStoreService:
         
         config_dict = {
             'x_urls': x_urls,
+            'data_dir': self.config.data_dir,
             'chunk_size': self.config.chunk_size,
             'chunk_overlap': self.config.chunk_overlap,
+            'download_media': True,
+            'index_text_only': True,
         }
         
         x_loader = get_x_loader()
