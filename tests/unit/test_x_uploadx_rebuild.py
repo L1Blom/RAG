@@ -255,3 +255,44 @@ def test_x_loader_fetch_tweet_requests_media_expansions(monkeypatch):
     assert captured["headers"]["Authorization"].startswith("Bearer ")
     assert "attachments.media_keys" in captured["params"]["expansions"]
     assert "media.fields" in captured["params"]
+
+
+def test_x_loader_upload_media_failure_still_indexes_text(temp_dir, monkeypatch):
+    """Media download failures should not block tweet text indexing."""
+    loader = XLoaderStrategy()
+
+    tweet_data = {
+        "data": {
+            "id": "999111222",
+            "author_id": "777",
+            "text": "index me even if media fails",
+            "created_at": "2026-03-10T12:00:00.000Z",
+            "public_metrics": {},
+        },
+        "includes": {
+            "users": [{"id": "777", "username": "uploader", "name": "Uploader"}],
+            "media": [{"type": "photo", "url": "https://cdn.example/fail.jpg"}],
+        },
+    }
+
+    monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
+    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30: False)
+
+    fake_vectorstore = _FakeVectorStore()
+    count = loader.load(
+        {
+            "x_urls": ["https://x.com/uploader/status/999111222"],
+            "data_dir": str(temp_dir),
+            "chunk_size": 1000,
+            "chunk_overlap": 50,
+            "download_media": True,
+            "index_text_only": True,
+        },
+        fake_vectorstore,
+    )
+
+    assert count > 0
+    assert any("index me even if media fails" in doc.page_content for doc in fake_vectorstore.added_documents)
+
+    post_json = json.loads((temp_dir / "999111222" / "post.json").read_text())
+    assert post_json["assets"]["images"][0]["status"] == "failed"
