@@ -296,3 +296,51 @@ def test_x_loader_upload_media_failure_still_indexes_text(temp_dir, monkeypatch)
 
     post_json = json.loads((temp_dir / "999111222" / "post.json").read_text())
     assert post_json["assets"]["images"][0]["status"] == "failed"
+
+
+def test_x_loader_upload_sets_snapshot_metadata_on_documents(temp_dir, monkeypatch):
+    """Upload-mode indexed documents should include snapshot and media metadata."""
+    loader = XLoaderStrategy()
+
+    tweet_data = {
+        "data": {
+            "id": "321654987",
+            "author_id": "456",
+            "text": "metadata contract text",
+            "created_at": "2026-03-10T13:00:00.000Z",
+            "public_metrics": {},
+        },
+        "includes": {
+            "users": [{"id": "456", "username": "metauser", "name": "Meta User"}],
+            "media": [{"type": "photo", "url": "https://cdn.example/meta.jpg"}],
+        },
+    }
+
+    monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
+    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30: True)
+
+    fake_vectorstore = _FakeVectorStore()
+    count = loader.load(
+        {
+            "x_urls": ["https://x.com/metauser/status/321654987"],
+            "data_dir": str(temp_dir),
+            "chunk_size": 1000,
+            "chunk_overlap": 50,
+            "download_media": True,
+            "index_text_only": True,
+        },
+        fake_vectorstore,
+    )
+
+    assert count > 0
+    assert len(fake_vectorstore.added_documents) > 0
+    metadata = fake_vectorstore.added_documents[0].metadata
+    assert metadata["source"] == "x"
+    assert metadata["tweet_id"] == "321654987"
+    assert metadata["author_username"] == "metauser"
+    assert metadata["indexing_mode"] == "text_only"
+    assert metadata["images_count"] == 1
+    assert metadata["videos_count"] == 0
+    assert metadata["audio_count"] == 0
+    assert metadata["snapshot_path"].endswith("321654987/post.json")
+    assert metadata["text_path"].endswith("321654987/post.txt")

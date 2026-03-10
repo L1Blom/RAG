@@ -329,11 +329,21 @@ class XLoaderStrategy:
                 continue
             
             try:
+                post_text = self._tweet_to_text(tweet_data, url)
+                author_users = tweet_data.get('includes', {}).get('users') or [{}]
+                author_user = author_users[0]
+                media_urls = self._extract_media_urls(tweet_data)
+                images_count = len(media_urls.get('images', []))
+                videos_count = len(media_urls.get('videos', []))
+                audio_count = len(media_urls.get('audio', []))
+
+                snapshot_path = ''
+                text_path = ''
+
                 # Persist local snapshot for upload/reload workflows.
                 if data_dir:
                     post_dir = self._build_post_dir(data_dir, tweet_id)
                     media_dirs = self._ensure_media_dirs(post_dir)
-                    media_urls = self._extract_media_urls(tweet_data)
                     assets = {'images': [], 'videos': [], 'audio': []}
 
                     for media_type, urls in media_urls.items():
@@ -354,7 +364,6 @@ class XLoaderStrategy:
                                 'status': status,
                             })
 
-                    post_text = self._tweet_to_text(tweet_data, url)
                     post_json = {
                         'tweet_id': tweet_id,
                         'post_url': url,
@@ -362,8 +371,8 @@ class XLoaderStrategy:
                         'created_at': tweet_data.get('data', {}).get('created_at', ''),
                         'author': {
                             'id': tweet_data.get('data', {}).get('author_id', ''),
-                            'username': tweet_data.get('includes', {}).get('users', [{}])[0].get('username', 'unknown') if tweet_data.get('includes', {}).get('users') else 'unknown',
-                            'name': tweet_data.get('includes', {}).get('users', [{}])[0].get('name', 'Unknown') if tweet_data.get('includes', {}).get('users') else 'Unknown',
+                            'username': author_user.get('username', 'unknown'),
+                            'name': author_user.get('name', 'Unknown'),
                         },
                         'assets': assets,
                         'indexing': {
@@ -374,8 +383,25 @@ class XLoaderStrategy:
                         'errors': [],
                     }
                     self._persist_post_snapshot(post_dir, post_json, post_text)
+                    snapshot_path = os.path.join(post_dir, 'post.json')
+                    text_path = os.path.join(post_dir, 'post.txt')
 
-                doc = self._tweet_to_document(tweet_data, url)
+                metadata = {
+                    'source': 'x',
+                    'tweet_id': tweet_data.get('data', {}).get('id') or tweet_id,
+                    'author_id': tweet_data.get('data', {}).get('author_id'),
+                    'author_username': author_user.get('username', 'unknown'),
+                    'author_name': author_user.get('name', 'Unknown'),
+                    'created_at': tweet_data.get('data', {}).get('created_at', ''),
+                    'post_url': url,
+                    'snapshot_path': snapshot_path,
+                    'text_path': text_path,
+                    'images_count': images_count,
+                    'videos_count': videos_count,
+                    'audio_count': audio_count,
+                    'indexing_mode': 'text_only',
+                }
+                doc = Document(page_content=post_text, metadata=metadata)
                 documents.append(doc)
                 logging.info(f"Loaded tweet {tweet_id} from {url}")
             except Exception as e:
