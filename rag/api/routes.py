@@ -678,7 +678,6 @@ def upload_x_urls_batch(project):
     """Upload a file with a list of X (Twitter) URLs to process sequentially.
     
     Accepts a JSON file or text file with one URL per line.
-    Processes each URL with 2 seconds delay between requests.
     """
     config = _get_config()
     base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
@@ -737,7 +736,7 @@ def upload_x_urls_batch(project):
         except (json.JSONDecodeError, IOError):
             existing_x_urls = []
     
-    # Process each URL with 2 second delay
+    # Process each URL
     results = {
         'total': len(valid_urls),
         'successful': 0,
