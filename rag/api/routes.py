@@ -31,7 +31,6 @@ from langchain_openai import ChatOpenAI
 from rag.models.response_models import success_response, error_response
 from rag.utils.exceptions import RAGException, ValidationError
 from rag.utils.security import allowed_file, validate_path
-from rag.services.document_loader.x_loader import XLoaderError
 
 
 # Create blueprint
@@ -786,9 +785,9 @@ def upload_x_urls_batch(project):
         # This shouldn't happen if we reach here with failed count > 0
         logging.warning(f"X loader completed with {results['successful']} successful and {results['failed']} failed, but no error messages were captured")
     
-    # Raise exception for single URL with errors
+    # Return explicit error response for single URL failures
     if len(valid_urls) == 1 and errors:
-        raise XLoaderError(errors[0])
+        return make_response(errors[0], 500)
     
     # Save all URLs to x.json
     with open(x_urls_file, 'w') as f:
