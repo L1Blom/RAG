@@ -1,5 +1,6 @@
 """Unit tests for the Flask app factory and middleware."""
 
+import io
 import pytest
 from flask import Flask
 from rag.api.middleware import setup_middleware
@@ -82,3 +83,73 @@ def test_cache_module():
         clear_all_caches()
     finally:
         os.unlink(path)
+
+
+def test_uploadx_route_stores_url_and_invokes_loader(temp_dir):
+    """Test /uploadx stores URL to x.json and calls load_x_urls once."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def __init__(self):
+            self.calls = []
+
+        def load_x_urls(self, urls):
+            self.calls.append(urls)
+            return 1
+
+    fake_vector = _FakeVectorStoreService()
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = fake_vector
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx', data={'url': 'x.com/user/status/123456'})
+
+    assert response.status_code == 200
+    assert fake_vector.calls == [['https://x.com/user/status/123456']]
+
+    x_urls_file = temp_dir / 'x.json'
+    assert x_urls_file.exists()
+    assert 'https://x.com/user/status/123456' in x_urls_file.read_text()
+
+
+def test_uploadx_batch_processes_valid_urls_and_updates_x_json(temp_dir):
+    """Test /uploadx/batch processes valid URLs and skips invalid entries."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def __init__(self):
+            self.calls = []
+
+        def load_x_urls(self, urls):
+            self.calls.append(urls)
+            return 1
+
+    fake_vector = _FakeVectorStoreService()
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = fake_vector
+
+    payload = "x.com/user1/status/111\nnot-a-valid-url\nhttps://twitter.com/user2/status/222\n"
+    data = {'file': (io.BytesIO(payload.encode('utf-8')), 'urls.txt')}
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data=data, content_type='multipart/form-data')
+
+    assert response.status_code == 200
+    assert len(fake_vector.calls) == 2
+    assert fake_vector.calls[0] == ['https://x.com/user1/status/111']
+    assert fake_vector.calls[1] == ['https://twitter.com/user2/status/222']
+
+    x_urls_file = temp_dir / 'x.json'
+    contents = x_urls_file.read_text()
+    assert 'https://x.com/user1/status/111' in contents
+    assert 'https://twitter.com/user2/status/222' in contents
