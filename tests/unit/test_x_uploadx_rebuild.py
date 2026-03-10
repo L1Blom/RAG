@@ -69,8 +69,8 @@ def test_vector_store_service_exposes_clear_and_rebuild_methods():
     assert hasattr(VectorStoreService, "rebuild_documents")
 
 
-def test_reload_route_uses_rebuild_instead_of_initialize_chain(monkeypatch):
-    """/reload should call vector store rebuild and avoid initialize_chain(True)."""
+def test_reload_route_rebuilds_and_reinitializes_chain(monkeypatch):
+    """/reload should rebuild docs and then reinitialize chain without reloading again."""
 
     app = Flask(__name__)
     app.register_blueprint(rag_bp)
@@ -91,16 +91,22 @@ def test_reload_route_uses_rebuild_instead_of_initialize_chain(monkeypatch):
     app.config["CHAT_HISTORY_SERVICE"] = object()
     app.config["CONFIG_SERVICE"] = object()
 
-    def _forbidden_initialize_chain(new_vectorstore=False):
-        raise AssertionError("reload should not call initialize_chain")
+    captured = {"called": False, "new_vectorstore": None}
 
-    monkeypatch.setattr("rag.api.routes.initialize_chain", _forbidden_initialize_chain)
+    def _fake_initialize_chain(new_vectorstore=False):
+        captured["called"] = True
+        captured["new_vectorstore"] = new_vectorstore
+        return True
+
+    monkeypatch.setattr("rag.api.routes.initialize_chain", _fake_initialize_chain)
 
     with app.test_client() as client:
         response = client.post("/prompt/demo/reload")
 
     assert response.status_code == 200
     assert fake_vector_store_service.called is True
+    assert captured["called"] is True
+    assert captured["new_vectorstore"] is False
 
 
 def test_x_loader_upload_persists_snapshot_and_media(temp_dir, monkeypatch):

@@ -434,6 +434,8 @@ def reload(project):
     """Reload documents into the vector store."""
     vector_store_svc = _get_service('VECTOR_STORE_SERVICE')
     vector_store_svc.rebuild_documents()
+    # Re-bind retriever/chain to the rebuilt vector store instance.
+    initialize_chain(False)
     return make_response('Documents reloaded', 200)
 
 
