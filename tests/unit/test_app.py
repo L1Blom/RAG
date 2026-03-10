@@ -270,3 +270,51 @@ def test_uploadx_batch_rejects_file_without_valid_x_urls(temp_dir):
 
     assert response.status_code == 400
     assert b'No valid X URLs found in file' in response.data
+
+
+def test_uploadx_batch_single_url_processing_failure_returns_500(temp_dir):
+    """Single valid URL with zero chunks should return 500 with a clear message."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 0
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    data = {'file': (io.BytesIO(b'https://x.com/user/status/123\n'), 'urls.txt')}
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data=data, content_type='multipart/form-data')
+
+    assert response.status_code == 500
+    assert b'failed to process' in response.data.lower()
+
+
+def test_uploadx_batch_single_url_exception_returns_500(temp_dir):
+    """Single valid URL raising loader exception should return 500 with error details."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            raise RuntimeError('boom')
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    data = {'file': (io.BytesIO(b'https://x.com/user/status/456\n'), 'urls.txt')}
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data=data, content_type='multipart/form-data')
+
+    assert response.status_code == 500
+    assert b'error processing x post' in response.data.lower() or b'boom' in response.data.lower()
