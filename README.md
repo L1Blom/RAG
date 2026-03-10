@@ -77,7 +77,14 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Parameters: none
 
-    After adding files to your data directory, use this to reload the vector store
+    Rebuilds the vector store from local files.
+
+    Current behavior:
+    - Clears existing vector data first.
+    - Reloads all configured document sources.
+    - Re-initializes the RAG chain after rebuild.
+
+    For X posts, reload uses local snapshots (`data/<tweet_id>/post.json` + `post.txt`) and does not need a refetch.
 
 7. /prompt/\<ID\>/clear
 
@@ -123,7 +130,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Parameters: url (string) - X (Twitter) post URL
 
-    Fetches an X post via the X API v2 and vectorizes it for RAG context.
+    Fetches an X post via the X API v2, stores a local snapshot, and vectorizes text for RAG context.
     
     Supported URL formats:
     - https://x.com/username/status/1234567890
@@ -133,6 +140,29 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
     - X_API_KEY or TWITTER_BEARER_TOKEN
 
     Get your API key from: https://developer.x.com/
+
+    Local storage layout per post:
+    - `data/<tweet_id>/post.json`
+    - `data/<tweet_id>/post.txt`
+    - `data/<tweet_id>/images/`
+    - `data/<tweet_id>/videos/`
+    - `data/<tweet_id>/audio/`
+
+    Indexing scope:
+    - Text content is indexed.
+    - Video and audio are downloaded for later use and are not indexed/transformed yet.
+
+14. /prompt/<ID>/uploadx/batch
+
+    Parameters: file (JSON array or text file, one URL per line)
+
+    Batch version of `uploadx`.
+
+    Behavior:
+    - Validates and normalizes URLs.
+    - Processes each valid URL sequentially.
+    - Stores URLs in `x.json` and writes local per-post snapshots.
+    - Returns a summary of successful and failed URLs.
 
 ## Usage
 
