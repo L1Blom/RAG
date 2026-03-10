@@ -153,3 +153,120 @@ def test_uploadx_batch_processes_valid_urls_and_updates_x_json(temp_dir):
     contents = x_urls_file.read_text()
     assert 'https://x.com/user1/status/111' in contents
     assert 'https://twitter.com/user2/status/222' in contents
+
+
+def test_uploadx_route_requires_url(temp_dir):
+    """Test /uploadx returns 400 when URL parameter is missing."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 1
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx', data={})
+
+    assert response.status_code == 400
+    assert b'URL parameter is required' in response.data
+
+
+def test_uploadx_route_rejects_invalid_x_url(temp_dir):
+    """Test /uploadx rejects non-X URLs."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 1
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx', data={'url': 'https://example.com/post/123'})
+
+    assert response.status_code == 400
+    assert b'Invalid X URL format' in response.data
+
+
+def test_uploadx_batch_requires_file_part(temp_dir):
+    """Test /uploadx/batch returns 400 when no file part is present."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 1
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data={}, content_type='multipart/form-data')
+
+    assert response.status_code == 400
+    assert b'No file part in the request' in response.data
+
+
+def test_uploadx_batch_rejects_empty_url_list(temp_dir):
+    """Test /uploadx/batch returns 400 when uploaded file has no URLs."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 1
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    data = {'file': (io.BytesIO(b'\n\n'), 'urls.txt')}
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data=data, content_type='multipart/form-data')
+
+    assert response.status_code == 400
+    assert b'No URLs found in file' in response.data
+
+
+def test_uploadx_batch_rejects_file_without_valid_x_urls(temp_dir):
+    """Test /uploadx/batch returns 400 when file has no valid X URLs."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            return 1
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    data = {'file': (io.BytesIO(b'https://example.com/a\nhttps://foo.bar/b\n'), 'urls.txt')}
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx/batch', data=data, content_type='multipart/form-data')
+
+    assert response.status_code == 400
+    assert b'No valid X URLs found in file' in response.data
