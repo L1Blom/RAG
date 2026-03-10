@@ -10,7 +10,7 @@ import re
 import json
 import requests
 from typing import Dict, Any, List, Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
@@ -100,9 +100,10 @@ class XLoaderStrategy:
         }
         
         params = {
-            "tweet.fields": "created_at,author_id,public_metrics,text,source",
-            "expansions": "author_id",
-            "user.fields": "username,name,description"
+            "tweet.fields": "created_at,author_id,public_metrics,text,source,attachments",
+            "expansions": "author_id,attachments.media_keys",
+            "user.fields": "username,name,description",
+            "media.fields": "type,url,preview_image_url,variants,duration_ms"
         }
         
         for attempt in range(max_retries):

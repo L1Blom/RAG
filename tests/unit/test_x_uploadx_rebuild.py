@@ -216,3 +216,36 @@ def test_x_loader_upload_indexes_text_only_even_with_media(temp_dir, monkeypatch
     assert count > 0
     assert len(fake_vectorstore.added_documents) > 0
     assert any("text to embed" in doc.page_content for doc in fake_vectorstore.added_documents)
+
+
+def test_x_loader_fetch_tweet_requests_media_expansions(monkeypatch):
+    """Fetch call should request media expansions to enable local asset persistence."""
+    loader = XLoaderStrategy()
+    loader.api_token = "token"
+
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        @staticmethod
+        def json():
+            return {"data": {"id": "1", "text": "ok"}}
+
+    def _fake_get(url, headers=None, params=None, timeout=0):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["params"] = params
+        captured["timeout"] = timeout
+        return _Resp()
+
+    monkeypatch.setattr("rag.services.document_loader.x_loader.requests.get", _fake_get)
+
+    result = loader._fetch_tweet("123")
+
+    assert result is not None
+    assert captured["url"].endswith("/123")
+    assert captured["headers"]["Authorization"].startswith("Bearer ")
+    assert "attachments.media_keys" in captured["params"]["expansions"]
+    assert "media.fields" in captured["params"]
