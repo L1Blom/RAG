@@ -44,9 +44,9 @@ Constraint: video/audio are downloaded and persisted, not indexed/transformed.
   - `_build_post_dir`
   - `_ensure_media_dirs`
   - `_persist_post_snapshot`
-  - `_load_post_snapshot`
+  - `_load_local_snapshot_documents`
 - Add X media-aware API fetch path:
-  - `_fetch_tweet_with_media`
+  - `_fetch_tweet` with media expansions (`attachments.media_keys`, `media.fields`)
   - `_extract_media_urls`
   - `_download_asset`
 - Add text normalization helper:
@@ -63,6 +63,8 @@ Constraint: video/audio are downloaded and persisted, not indexed/transformed.
 ### Notes
 - Media download failures should not block text indexing.
 - Keep `x.json` support for upload ledger; not used as reload source.
+- Snapshot writes are atomic (`os.replace`) to avoid partial files.
+- Media downloads are streamed with size limits and safe path joins.
 
 ### Done When
 - Uploading one X URL creates `data/<tweet_id>/post.json` and `post.txt`.
@@ -111,6 +113,9 @@ Constraint: video/audio are downloaded and persisted, not indexed/transformed.
 ### Runtime checks
 - Confirm `X_API_KEY`/`TWITTER_BEARER_TOKEN` available for upload path.
 - Confirm no X API traffic occurs during `/reload` path.
+- Confirm download hardening defaults are applied:
+  - `download_timeout` (default: 30 seconds)
+  - `max_download_mb` (default: 50 MB)
 
 ## 7) Suggested Commit Plan
 
