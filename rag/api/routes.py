@@ -665,7 +665,24 @@ def upload_x_url(project):
         count = vector_store_svc.load_x_urls([url])
         if count > 0:
             logging.info("X post %s stored and vectorized successfully", url)
-            return make_response(f'X post stored successfully ({count} chunks)', 200)
+            # Enrich response with snapshot counts when local post.json exists.
+            summary = ''
+            tweet_id_match = re.search(r'/status/(\d+)', url)
+            if tweet_id_match:
+                tweet_id = tweet_id_match.group(1)
+                snapshot_path = os.path.join(serve_files, tweet_id, 'post.json')
+                if os.path.exists(snapshot_path):
+                    try:
+                        with open(snapshot_path, 'r') as f:
+                            snapshot = json.load(f)
+                        assets = snapshot.get('assets', {})
+                        images = len(assets.get('images', []))
+                        videos = len(assets.get('videos', []))
+                        audio = len(assets.get('audio', []))
+                        summary = f' tweet_id={tweet_id} images={images} videos={videos} audio={audio}'
+                    except (json.JSONDecodeError, OSError):
+                        pass
+            return make_response(f'X post stored successfully ({count} chunks){summary}', 200)
         else:
             return make_response("Failed to fetch or process X post", 500)
     except Exception as e:

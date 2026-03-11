@@ -1,6 +1,7 @@
 """Unit tests for the Flask app factory and middleware."""
 
 import io
+import json
 import pytest
 from flask import Flask
 from rag.api.middleware import setup_middleware
@@ -115,6 +116,43 @@ def test_uploadx_route_stores_url_and_invokes_loader(temp_dir):
     x_urls_file = temp_dir / 'x.json'
     assert x_urls_file.exists()
     assert 'https://x.com/user/status/123456' in x_urls_file.read_text()
+
+
+def test_uploadx_response_includes_snapshot_media_counts(temp_dir):
+    """Test /uploadx success message includes tweet id and media counters when snapshot exists."""
+    app = Flask(__name__)
+    setup_middleware(app)
+    app.register_blueprint(rag_bp)
+
+    class _FakeConfig:
+        data_dir = str(temp_dir)
+
+    class _FakeVectorStoreService:
+        def load_x_urls(self, urls):
+            post_dir = temp_dir / '123456'
+            post_dir.mkdir(parents=True, exist_ok=True)
+            (post_dir / 'post.json').write_text(json.dumps({
+                'tweet_id': '123456',
+                'assets': {
+                    'images': [{'status': 'downloaded'}],
+                    'videos': [{'status': 'downloaded'}, {'status': 'downloaded'}],
+                    'audio': []
+                }
+            }))
+            return 3
+
+    app.config['RAG_CONFIG'] = _FakeConfig()
+    app.config['VECTOR_STORE_SERVICE'] = _FakeVectorStoreService()
+
+    with app.test_client() as client:
+        response = client.post('/prompt/demo/uploadx', data={'url': 'x.com/user/status/123456'})
+
+    assert response.status_code == 200
+    body = response.data.decode('utf-8').lower()
+    assert 'tweet_id=123456' in body
+    assert 'images=1' in body
+    assert 'videos=2' in body
+    assert 'audio=0' in body
 
 
 def test_uploadx_batch_processes_valid_urls_and_updates_x_json(temp_dir):
