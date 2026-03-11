@@ -121,9 +121,9 @@ Constraint: video/audio are downloaded and persisted, not indexed/transformed.
 5. `docs(x-uploadx): finalize behavior and operator notes`
 
 ## 8) Acceptance Gate
-- [ ] Upload creates `data/<tweet_id>/post.json` and `post.txt`.
-- [ ] Images/videos/audio are downloaded when present.
-- [ ] Only text content is indexed.
-- [ ] `/reload` clears vector DB before rebuild.
-- [ ] `/reload` performs no X API calls.
-- [ ] Non-X document handlers unchanged.
+- [x] Upload creates `data/<tweet_id>/post.json` and `post.txt`.
+- [x] Images/videos/audio are downloaded when present.
+- [x] Only text content is indexed.
+- [x] `/reload` clears vector DB before rebuild.
+- [x] `/reload` performs no X API calls.
+- [x] Non-X document handlers unchanged.

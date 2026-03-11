@@ -150,7 +150,7 @@ def test_x_loader_upload_persists_snapshot_and_media(temp_dir, monkeypatch):
 
     monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
 
-    def _fake_download(url, target_path, timeout=30):
+    def _fake_download(url, target_path, timeout=30, max_bytes=None):
         Path(target_path).parent.mkdir(parents=True, exist_ok=True)
         Path(target_path).write_bytes(b"media")
         return True
@@ -204,7 +204,7 @@ def test_x_loader_upload_indexes_text_only_even_with_media(temp_dir, monkeypatch
         },
     }
     monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
-    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30: True)
+    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30, max_bytes=None: True)
 
     fake_vectorstore = _FakeVectorStore()
     count = loader.load(
@@ -276,7 +276,7 @@ def test_x_loader_upload_media_failure_still_indexes_text(temp_dir, monkeypatch)
     }
 
     monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
-    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30: False)
+    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30, max_bytes=None: False)
 
     fake_vectorstore = _FakeVectorStore()
     count = loader.load(
@@ -317,7 +317,7 @@ def test_x_loader_upload_sets_snapshot_metadata_on_documents(temp_dir, monkeypat
     }
 
     monkeypatch.setattr(loader, "_fetch_tweet", lambda tweet_id, max_retries=3: tweet_data)
-    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30: True)
+    monkeypatch.setattr(loader, "_download_asset", lambda url, target_path, timeout=30, max_bytes=None: True)
 
     fake_vectorstore = _FakeVectorStore()
     count = loader.load(

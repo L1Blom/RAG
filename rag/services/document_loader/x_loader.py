@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import json
+import tempfile
 import requests
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
@@ -257,19 +258,47 @@ class XLoaderStrategy:
 
         return result
 
-    def _download_asset(self, url: str, target_path: str, timeout: int = 30) -> bool:
+    def _download_asset(self, url: str, target_path: str, timeout: int = 30, max_bytes: int = 50 * 1024 * 1024) -> bool:
         """Download one media asset to disk."""
         try:
-            response = requests.get(url, timeout=timeout)
+            response = requests.get(url, timeout=timeout, stream=True)
             if response.status_code != 200:
                 logging.warning("Failed downloading asset %s: HTTP %s", url, response.status_code)
                 return False
 
-            with open(target_path, 'wb') as file:
-                file.write(response.content)
+            content_length = response.headers.get('Content-Length')
+            if content_length is not None:
+                try:
+                    if int(content_length) > max_bytes:
+                        logging.warning("Skipping oversized asset %s (%s bytes)", url, content_length)
+                        return False
+                except ValueError:
+                    pass
+
+            base_dir = os.path.dirname(target_path)
+            safe_target_path = self._safe_join(base_dir, os.path.basename(target_path))
+            downloaded = 0
+
+            with open(safe_target_path, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if not chunk:
+                        continue
+                    downloaded += len(chunk)
+                    if downloaded > max_bytes:
+                        logging.warning("Aborting oversized streamed asset %s", url)
+                        file.close()
+                        try:
+                            os.remove(safe_target_path)
+                        except OSError:
+                            pass
+                        return False
+                    file.write(chunk)
             return True
         except requests.RequestException as exc:
             logging.warning("Failed downloading asset %s: %s", url, exc)
+            return False
+        except OSError as exc:
+            logging.warning("Failed writing asset %s: %s", url, exc)
             return False
 
     def _persist_post_snapshot(self, post_dir: str, post_json: Dict[str, Any], post_text: str) -> None:
@@ -277,10 +306,39 @@ class XLoaderStrategy:
         post_json_path = os.path.join(post_dir, 'post.json')
         post_txt_path = os.path.join(post_dir, 'post.txt')
 
-        with open(post_json_path, 'w') as file:
-            json.dump(post_json, file, indent=2)
-        with open(post_txt_path, 'w') as file:
-            file.write(post_text)
+        # Atomic write for JSON snapshot
+        with tempfile.NamedTemporaryFile('w', dir=post_dir, delete=False, prefix='post_json_', suffix='.tmp') as tmp_json:
+            json.dump(post_json, tmp_json, indent=2)
+            tmp_json_path = tmp_json.name
+        os.replace(tmp_json_path, post_json_path)
+
+        # Atomic write for text snapshot
+        with tempfile.NamedTemporaryFile('w', dir=post_dir, delete=False, prefix='post_txt_', suffix='.tmp') as tmp_txt:
+            tmp_txt.write(post_text)
+            tmp_txt_path = tmp_txt.name
+        os.replace(tmp_txt_path, post_txt_path)
+
+    def _safe_join(self, base_dir: str, *parts: str) -> str:
+        """Safely join paths and prevent path traversal outside base_dir."""
+        base_real = os.path.realpath(base_dir)
+        candidate = os.path.realpath(os.path.join(base_dir, *parts))
+        if os.path.commonpath([base_real, candidate]) != base_real:
+            raise ValueError(f"Unsafe path detected: {candidate}")
+        return candidate
+
+    def _sanitize_extension(self, extension: str) -> str:
+        """Sanitize file extension derived from URL path."""
+        if not extension:
+            return '.bin'
+        ext = extension.lower()
+        if not ext.startswith('.'):
+            ext = f'.{ext}'
+        ext = re.sub(r'[^a-z0-9.]', '', ext)
+        if len(ext) > 10:
+            ext = ext[:10]
+        if ext in ('', '.'):
+            return '.bin'
+        return ext
     
     def load(self, config: Dict[str, Any], vectorstore: Chroma) -> int:
         """Load X posts into vector store.
@@ -316,6 +374,8 @@ class XLoaderStrategy:
         documents = []
         data_dir = config.get('data_dir', '')
         download_media = bool(config.get('download_media', False))
+        download_timeout = int(config.get('download_timeout', 30))
+        max_download_mb = int(config.get('max_download_mb', 50))
         
         for url in valid_urls:
             tweet_id = self._extract_tweet_id(url)
@@ -349,14 +409,19 @@ class XLoaderStrategy:
                     for media_type, urls in media_urls.items():
                         for idx, media_url in enumerate(urls, start=1):
                             parsed = urlparse(media_url)
-                            ext = os.path.splitext(parsed.path)[1] or '.bin'
+                            ext = self._sanitize_extension(os.path.splitext(parsed.path)[1])
                             prefix = {'images': 'img', 'videos': 'vid', 'audio': 'aud'}[media_type]
                             filename = f"{prefix}_{idx:02d}{ext}"
-                            target_path = os.path.join(media_dirs[media_type], filename)
+                            target_path = self._safe_join(media_dirs[media_type], filename)
 
                             status = 'skipped'
                             if download_media:
-                                status = 'downloaded' if self._download_asset(media_url, target_path) else 'failed'
+                                status = 'downloaded' if self._download_asset(
+                                    media_url,
+                                    target_path,
+                                    timeout=download_timeout,
+                                    max_bytes=max_download_mb * 1024 * 1024,
+                                ) else 'failed'
 
                             assets[media_type].append({
                                 'url': media_url,
