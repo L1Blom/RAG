@@ -10,6 +10,7 @@ import re
 import json
 import tempfile
 import requests
+import html
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
@@ -101,8 +102,8 @@ class XLoaderStrategy:
         }
         
         params = {
-            "tweet.fields": "created_at,author_id,public_metrics,text,source,attachments",
-            "expansions": "author_id,attachments.media_keys",
+            "tweet.fields": "created_at,author_id,public_metrics,text,source,attachments,entities,referenced_tweets,note_tweet,article",
+            "expansions": "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id",
             "user.fields": "username,name,description",
             "media.fields": "type,url,preview_image_url,variants,duration_ms"
         }
@@ -172,8 +173,8 @@ class XLoaderStrategy:
         author_username = includes.get('username', 'unknown')
         text_parts.append(f"@{author_username} ({author_name})")
         
-        # Tweet text
-        text_parts.append(tweet.get('text', ''))
+        # Tweet text (prefer enriched text over raw tweet.text)
+        text_parts.append(self._extract_primary_text(tweet_data))
         
         # Metrics
         metrics = tweet.get('public_metrics', {})
@@ -212,6 +213,160 @@ class XLoaderStrategy:
         
         content = '\n'.join(text_parts)
         return Document(page_content=content, metadata=metadata)
+
+    def _extract_primary_text(self, tweet_data: Dict[str, Any]) -> str:
+        """Extract the best available human-readable text from tweet payload."""
+        tweet = tweet_data.get('data', {})
+        tweet_id = str(tweet.get('id', '') or '')
+
+        # Prefer long-form note_tweet text when available.
+        text = ''
+        note_tweet = tweet.get('note_tweet')
+        if isinstance(note_tweet, dict):
+            text = str(note_tweet.get('text', '') or '')
+        if not text:
+            article = tweet.get('article')
+            if isinstance(article, dict):
+                text = str(article.get('plain_text', '') or article.get('preview_text', '') or '')
+        if not text:
+            text = str(tweet.get('text', '') or '')
+
+        # Replace t.co links with expanded URLs when present.
+        entities = tweet.get('entities', {}) if isinstance(tweet.get('entities'), dict) else {}
+        url_entities = entities.get('urls', []) if isinstance(entities.get('urls'), list) else []
+        for item in url_entities:
+            short = item.get('url')
+            expanded = item.get('expanded_url') or item.get('unwound_url') or item.get('display_url')
+            if short and expanded:
+                text = text.replace(str(short), str(expanded))
+
+        # If tweet body is URL-only, enrich with linked page summary text.
+        if self._is_link_only_text(text):
+            preview_blocks = []
+            for item in url_entities:
+                expanded = item.get('expanded_url') or item.get('unwound_url') or item.get('url')
+                if not expanded:
+                    continue
+                preview = self._fetch_link_preview_text(str(expanded))
+                if preview:
+                    preview_blocks.append(f"{expanded}\n{preview}")
+            if preview_blocks:
+                text = f"{text}\n\nLinked content:\n" + "\n\n".join(preview_blocks)
+
+        # If this is a quote/reply-only post, append referenced tweet text for context.
+        includes = tweet_data.get('includes', {}) if isinstance(tweet_data.get('includes'), dict) else {}
+        included_tweets = includes.get('tweets', []) if isinstance(includes.get('tweets'), list) else []
+        if included_tweets:
+            quoted_texts = []
+            for item in included_tweets:
+                item_text = ''
+                item_note = item.get('note_tweet')
+                if isinstance(item_note, dict):
+                    item_text = str(item_note.get('text', '') or '')
+                if not item_text:
+                    item_text = str(item.get('text', '') or '')
+                item_text = item_text.strip()
+                if item_text:
+                    quoted_texts.append(item_text)
+            if quoted_texts:
+                text = f"{text}\n\nReferenced post(s):\n" + "\n\n".join(quoted_texts)
+
+        # Fallback for URL-only posts: try syndicated text expansion.
+        if self._is_url_only_text(text):
+            syndicated_text = self._fetch_syndication_text(tweet_id)
+            if syndicated_text:
+                text = syndicated_text
+
+        return text.strip()
+
+    def _is_link_only_text(self, text: str) -> bool:
+        """Return True if text contains only URLs/whitespace/punctuation."""
+        if not text:
+            return True
+        stripped = text.strip()
+        # Remove URLs and common separators; if nothing remains it's link-only.
+        no_urls = re.sub(r'https?://\S+', ' ', stripped)
+        no_noise = re.sub(r'[\s\-–—:;,.!?()\[\]{}]+', '', no_urls)
+        return no_noise == ''
+
+    def _fetch_link_preview_text(self, url: str) -> str:
+        """Fetch lightweight preview text from linked pages for URL-only tweets."""
+        try:
+            response = requests.get(
+                url,
+                timeout=12,
+                allow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (RAG XLoader)"},
+            )
+        except requests.RequestException:
+            return ''
+
+        if response.status_code != 200:
+            return ''
+
+        content_type = response.headers.get('Content-Type', '').lower()
+        if 'text/html' not in content_type:
+            return ''
+
+        body = response.text or ''
+        if not body:
+            return ''
+
+        def _meta(pattern: str) -> str:
+            match = re.search(pattern, body, flags=re.IGNORECASE | re.DOTALL)
+            if not match:
+                return ''
+            return html.unescape(match.group(1)).strip()
+
+        title = _meta(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']')
+        if not title:
+            title = _meta(r'<title[^>]*>(.*?)</title>')
+
+        description = _meta(r'<meta[^>]+(?:property=["\']og:description["\']|name=["\']description["\'])[^>]+content=["\']([^"\']+)["\']')
+
+        text_only = re.sub(r'<script[\s\S]*?</script>', ' ', body, flags=re.IGNORECASE)
+        text_only = re.sub(r'<style[\s\S]*?</style>', ' ', text_only, flags=re.IGNORECASE)
+        text_only = re.sub(r'<[^>]+>', ' ', text_only)
+        text_only = html.unescape(text_only)
+        text_only = re.sub(r'\s+', ' ', text_only).strip()
+        snippet = text_only[:600] if text_only else ''
+
+        parts = []
+        if title:
+            parts.append(f"Title: {title}")
+        if description:
+            parts.append(f"Description: {description}")
+        if snippet and snippet != title and snippet != description:
+            parts.append(f"Snippet: {snippet}")
+        return '\n'.join(parts)
+
+    def _is_url_only_text(self, text: str) -> bool:
+        """Return True when text appears to only contain one or more URLs."""
+        stripped = (text or '').strip()
+        if not stripped:
+            return True
+        tokens = [t for t in re.split(r'\s+', stripped) if t]
+        if not tokens:
+            return True
+        return all(re.match(r'^https?://\S+$', token) for token in tokens)
+
+    def _fetch_syndication_text(self, tweet_id: str) -> str:
+        """Try to fetch richer tweet text from X syndication endpoint."""
+        if not tweet_id:
+            return ''
+        try:
+            resp = requests.get(
+                "https://cdn.syndication.twimg.com/tweet-result",
+                params={"id": tweet_id, "lang": "en"},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return ''
+            data = resp.json()
+            text = str(data.get('text', '') or '').strip()
+            return text
+        except (requests.RequestException, ValueError):
+            return ''
 
     def _tweet_to_text(self, tweet_data: Dict[str, Any], url: str = '') -> str:
         """Convert tweet data to normalized plain text for post.txt."""
@@ -432,7 +587,7 @@ class XLoaderStrategy:
                     post_json = {
                         'tweet_id': tweet_id,
                         'post_url': url,
-                        'text': tweet_data.get('data', {}).get('text', ''),
+                        'text': post_text,
                         'created_at': tweet_data.get('data', {}).get('created_at', ''),
                         'author': {
                             'id': tweet_data.get('data', {}).get('author_id', ''),

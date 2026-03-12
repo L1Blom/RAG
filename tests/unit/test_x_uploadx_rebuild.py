@@ -253,6 +253,7 @@ def test_x_loader_fetch_tweet_requests_media_expansions(monkeypatch):
     assert result is not None
     assert captured["url"].endswith("/123")
     assert captured["headers"]["Authorization"].startswith("Bearer ")
+    assert "article" in captured["params"]["tweet.fields"]
     assert "attachments.media_keys" in captured["params"]["expansions"]
     assert "media.fields" in captured["params"]
 
@@ -344,3 +345,120 @@ def test_x_loader_upload_sets_snapshot_metadata_on_documents(temp_dir, monkeypat
     assert metadata["audio_count"] == 0
     assert metadata["snapshot_path"].endswith("321654987/post.json")
     assert metadata["text_path"].endswith("321654987/post.txt")
+
+
+def test_x_loader_extract_primary_text_prefers_note_and_referenced_content():
+    """Primary text extraction should prefer note_tweet, expand URLs, and include referenced text."""
+    loader = XLoaderStrategy()
+
+    payload = {
+        "data": {
+            "text": "https://t.co/abc",
+            "note_tweet": {
+                "text": "Long form content https://t.co/abc"
+            },
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/abc",
+                        "expanded_url": "https://example.com/full-article"
+                    }
+                ]
+            }
+        },
+        "includes": {
+            "tweets": [
+                {
+                    "text": "Referenced tweet text"
+                }
+            ]
+        }
+    }
+
+    text = loader._extract_primary_text(payload)
+
+    assert "Long form content" in text
+    assert "https://example.com/full-article" in text
+    assert "Referenced post(s):" in text
+    assert "Referenced tweet text" in text
+
+
+def test_x_loader_extract_primary_text_uses_article_plain_text():
+    """Primary extraction should use article plain text when note_tweet is absent."""
+    loader = XLoaderStrategy()
+
+    payload = {
+        "data": {
+            "text": "https://t.co/article",
+            "article": {
+                "title": "Example",
+                "plain_text": "This is the full article body text.",
+                "preview_text": "Short preview",
+            },
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/article",
+                        "expanded_url": "https://x.com/i/article/123"
+                    }
+                ]
+            }
+        },
+        "includes": {}
+    }
+
+    text = loader._extract_primary_text(payload)
+    assert text == "This is the full article body text."
+
+
+def test_x_loader_extract_primary_text_enriches_url_only_posts(monkeypatch):
+    """URL-only tweet text should be enriched with linked content preview."""
+    loader = XLoaderStrategy()
+
+    payload = {
+        "data": {
+            "text": "https://t.co/onlyurl",
+            "entities": {
+                "urls": [
+                    {
+                        "url": "https://t.co/onlyurl",
+                        "expanded_url": "https://example.com/long"
+                    }
+                ]
+            }
+        },
+        "includes": {}
+    }
+
+    monkeypatch.setattr(
+        loader,
+        "_fetch_link_preview_text",
+        lambda url: "Title: Example Long Form\nDescription: Full text summary",
+    )
+
+    text = loader._extract_primary_text(payload)
+
+    assert "https://example.com/long" in text
+    assert "Linked content:" in text
+    assert "Description: Full text summary" in text
+
+
+def test_x_loader_extract_primary_text_uses_syndication_for_url_only(monkeypatch):
+    """URL-only tweet text should use syndication fallback when available."""
+    loader = XLoaderStrategy()
+
+    payload = {
+        "data": {
+            "id": "2031801444064543156",
+            "text": "https://t.co/IlSdfePEMV"
+        }
+    }
+
+    monkeypatch.setattr(
+        loader,
+        "_fetch_syndication_text",
+        lambda tweet_id: "Expanded post body from syndication"
+    )
+
+    text = loader._extract_primary_text(payload)
+    assert text == "Expanded post body from syndication"
