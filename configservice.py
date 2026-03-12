@@ -154,26 +154,55 @@ def load_configurations():
 @app.route('/start', methods=['GET'])
 @cross_origin()
 def start():
-    config = load_config()
-    port = config.get(project, {}).get('port', 'unknown')
-    logging.info(f"Starting subprocess for project {project} on port {port}")
-    globvars['processes'][project] = subprocess.Popen(
-        ['python', 'ragservice.py', project], 
-        env=os.environ,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-        universal_newlines=True)
-    read_process_output(globvars['processes'][project])
-    print(f"Project {project} started on port {port} (pid {globvars['processes'][project].pid})")
-    return make_response({'message':'Project started'}, 200)    
+    try:
+        project = request.args.get('project')
+        if not project:
+            raise ValueError("Project parameter is required")
+
+        config = load_config() or {}
+        if project not in config:
+            raise ValueError(f"Project not found: {project}")
+
+        existing_process = globvars['processes'].get(project)
+        if existing_process and existing_process.poll() is None:
+            return make_response({'message': f'Project {project} is already running'}, 200)
+
+        port = config.get(project, {}).get('port', 'unknown')
+        logging.info(f"Starting subprocess for project {project} on port {port}")
+        globvars['processes'][project] = subprocess.Popen(
+            ['python', 'ragservice.py', project],
+            env=os.environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            bufsize=1,
+            universal_newlines=True)
+        read_process_output(globvars['processes'][project])
+        print(f"Project {project} started on port {port} (pid {globvars['processes'][project].pid})")
+        return make_response({'message': f'Project {project} started'}, 200)
+    except Exception as e:
+        logging.error("Error starting project: %s", e)
+        return make_response({'error': str(e)}, 400)
 
 @app.route('/stop', methods=['GET'])
 @cross_origin()
 def stop():
-    project = request.args.get('project')
-    p = globvars['processes'][project]
-    return make_response({'message':p.kill()},200)
+    try:
+        project = request.args.get('project')
+        if not project:
+            raise ValueError("Project parameter is required")
+
+        p = globvars['processes'].get(project)
+        if not p or p.poll() is not None:
+            globvars['processes'].pop(project, None)
+            return make_response({'message': f'Project {project} is not running'}, 404)
+
+        p.kill()
+        p.wait(timeout=5)
+        globvars['processes'].pop(project, None)
+        return make_response({'message': f'Project {project} stopped'}, 200)
+    except Exception as e:
+        logging.error("Error stopping project: %s", e)
+        return make_response({'error': str(e)}, 400)
 
 @app.route('/set', methods=['POST'])
 @cross_origin()
