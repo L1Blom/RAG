@@ -1,3 +1,6 @@
+# STANDALONE DEV COMPOSE — for running RAG/configservice in isolation.
+# For the full integrated stack (RAG + RAGUI + nginx), use the root docker-compose.yml.
+
 services:
   configservice:
     build: .
