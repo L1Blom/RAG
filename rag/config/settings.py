@@ -115,3 +115,34 @@ class ConfigService:
             if default is not None:
                 return default
             raise ConfigError(f"Configuration key not found: [{section}] {key}") from e
+
+    def save(self, config) -> None:
+        """Persist mutable runtime settings back to the ini file.
+
+        Only the settings that can be changed at runtime are written back.
+        Structural settings (data_dir, persistence, globs, …) are left as-is.
+        """
+        llm_section = f'LLMS.{config.use_llm}'
+        if not self.parser.has_section(llm_section):
+            self.parser.add_section(llm_section)
+        if not self.parser.has_section('LLMS'):
+            self.parser.add_section('LLMS')
+
+        # Mutable DEFAULT settings
+        self.parser['DEFAULT']['temperature']   = str(config.temperature)
+        self.parser['DEFAULT']['max_tokens']    = str(int(config.max_tokens))
+        self.parser['DEFAULT']['similar']       = str(config.similar)
+        self.parser['DEFAULT']['score']         = str(config.score)
+        self.parser['DEFAULT']['chunk_size']    = str(config.chunk_size)
+        self.parser['DEFAULT']['chunk_overlap'] = str(config.chunk_overlap)
+        self.parser['DEFAULT']['system_prompt'] = config.system_prompt or ''
+
+        # Active LLM provider
+        self.parser['LLMS']['use_llm'] = config.use_llm
+
+        # Per-provider model settings
+        self.parser[llm_section]['modeltext']       = config.model_text or ''
+        self.parser[llm_section]['embedding_model'] = config.embedding_model or ''
+
+        with open(self.config_file, 'w') as f:
+            self.parser.write(f)

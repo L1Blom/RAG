@@ -62,6 +62,11 @@ def _log_error(error_text: str):
     raise HTTPException(error_text)
 
 
+def _save_config() -> None:
+    """Persist the current RAGConfig back to the project's ini file."""
+    _get_service('CONFIG_SERVICE').save(_get_config())
+
+
 def _encode_image(image_url: str) -> str:
     """Encode an image from URL to base64."""
     logging.info("Encoding image: %s", image_url)
@@ -319,6 +324,7 @@ def set_model(project):
     config.model_text = this_model
     state['set_chat_model'](config.temperature, config.max_tokens)
     initialize_chain(True)
+    _save_config()
     return make_response(f'Model set to {this_model}', 200)
 
 
@@ -342,6 +348,7 @@ def set_embeddings(project):
     config.embedding_model = this_embedding
     state['set_chat_model'](config.temperature, config.max_tokens)
     initialize_chain(True)
+    _save_config()
     return make_response(f'Embedding set to {this_embedding}', 200)
 
 
@@ -365,6 +372,7 @@ def set_chunk(project):
     config.chunk_size = chunk_size
     config.chunk_overlap = chunk_overlap
     initialize_chain(True)
+    _save_config()
     return make_response(f'Chunk set to {chunk_size} with overlap {chunk_overlap}', 200)
 
 
@@ -385,6 +393,7 @@ def set_temperature(project):
     config.temperature = temperature
     state['set_chat_model'](temperature, config.max_tokens)
     initialize_chain(True)
+    _save_config()
     return make_response(f'Temperature set to {temperature}', 200)
 
 
@@ -398,8 +407,11 @@ def set_system_prompt(project):
     else:
         new_prompt = request.form.get('systemprompt')
 
+    config = _get_config()
+    config.system_prompt = new_prompt
     state['Prompt'] = new_prompt
     initialize_chain(True)
+    _save_config()
     return make_response(f'System prompt set to {new_prompt}', 200)
 
 
@@ -420,6 +432,7 @@ def set_max_tokens(project):
     config.max_tokens = max_tokens
     state['set_chat_model'](config.temperature, max_tokens)
     initialize_chain(True)
+    _save_config()
     return make_response(f'Max tokens set to {max_tokens}', 200)
 
 

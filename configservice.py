@@ -31,56 +31,58 @@ globvars['processes'] = {}
 globvars['timer'] = 1     
 
 config_file_path = './config.json'
+_config_lock = threading.Lock()
 
 def load_config():
-    if os.path.exists(config_file_path):
-        if os.stat(config_file_path).st_size > 0: 
-            with open(config_file_path, 'r') as file:
-                try:
-                    contents = json.load(file)
-                    if len(contents) == 0:
-                        logging.info("Config file is empty, reading constants directory")
-                    else:
-                        return contents
-                except json.JSONDecodeError as e:
-                    logging.error("Error reading config file: %s", e)
-                return
+    with _config_lock:
+        if os.path.exists(config_file_path):
+            if os.stat(config_file_path).st_size > 0:
+                with open(config_file_path, 'r') as file:
+                    try:
+                        contents = json.load(file)
+                        if len(contents) == 0:
+                            logging.info("Config file is empty, reading constants directory")
+                        else:
+                            return contents
+                    except json.JSONDecodeError as e:
+                        logging.error("Error reading config file: %s", e)
+                    return
 
-    logging.info("Config file is empty or non-existent, reading constants directory")
-    configfiles = [f for f in os.listdir('constants') if f.endswith('.ini')]
-    if configfiles:
-        output = {}
-        for configfile in configfiles:
-            if configfile.startswith('constants_'):
-                if not configfile.startswith('constants__'):
-                    project = os.path.splitext(configfile)[0].split('_')[1]
-                    rc = configparser.ConfigParser()
-                    rr=rc.read('constants/'+configfile)
-                    print("Reading config file: ", rr)
-                    port = rc.get('FLASK','port')
-                    description = rc.get('DEFAULT','description')
-                    provider = rc.get('LLMS','use_llm')
-                    llm = rc.get('LLMS'+'.'+provider,'modeltext')
-                    output[project] = {
-                            "port": port,
-                            "description": description,
-                            "provider": provider,
-                            "llm": llm
-                        }
-        with open(config_file_path, 'w') as file:
-            json.dump(output, file)
-        return output
-    else:
-        logging.error("Error: No config files found in constants directory")
-        # Create a default config if no config files are found
-        with open(config_file_path, 'w') as file:
-            json.dump({"DEFAULT": {"port": "5000", "description": "Default project", "provider": "OPENAI", "llm": "gpt-4o"}}, file)
-        logging.info("Default config created")  
-        return json.load(config_file_path)
+        logging.info("Config file is empty or non-existent, reading constants directory")
+        configfiles = [f for f in os.listdir('constants') if f.endswith('.ini')]
+        if configfiles:
+            output = {}
+            for configfile in configfiles:
+                if configfile.startswith('constants_'):
+                    if not configfile.startswith('constants__'):
+                        project = os.path.splitext(configfile)[0].split('_')[1]
+                        rc = configparser.ConfigParser()
+                        rr=rc.read('constants/'+configfile)
+                        print("Reading config file: ", rr)
+                        port = rc.get('FLASK','port')
+                        description = rc.get('DEFAULT','description')
+                        provider = rc.get('LLMS','use_llm')
+                        llm = rc.get('LLMS'+'.'+provider,'modeltext')
+                        output[project] = {
+                                "port": port,
+                                "description": description,
+                                "provider": provider,
+                                "llm": llm
+                            }
+            with open(config_file_path, 'w') as file:
+                json.dump(output, file)
+            return output
+        else:
+            logging.error("Error: No config files found in constants directory")
+            with open(config_file_path, 'w') as file:
+                json.dump({"DEFAULT": {"port": "5000", "description": "Default project", "provider": "OPENAI", "llm": "gpt-4o"}}, file)
+            logging.info("Default config created")
+            return {"DEFAULT": {"port": "5000", "description": "Default project", "provider": "OPENAI", "llm": "gpt-4o"}}
 
 def save_config(config):
-    with open(config_file_path, 'w') as file:
-        json.dump(config, file)
+    with _config_lock:
+        with open(config_file_path, 'w') as file:
+            json.dump(config, file)
 
 def set_param(param):
     output = request.json.get(param)
