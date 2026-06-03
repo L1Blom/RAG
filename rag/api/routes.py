@@ -16,7 +16,7 @@ from pathlib import PurePath
 from urllib.request import urlopen
 from urllib.parse import quote
 
-from flask import Blueprint, request, make_response, send_file, current_app, jsonify
+from flask import Blueprint, request, make_response, send_file, current_app, jsonify, Response, stream_with_context
 from flask_cors import cross_origin
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
@@ -839,6 +839,169 @@ def upload_x_urls_batch(project):
         f"Batch upload complete: {results['successful']} successful, {results['failed']} failed",
         200
     )
+
+
+# ---------------------------------------------------------------------------
+# X posts viewer
+# ---------------------------------------------------------------------------
+
+@rag_bp.route('/prompt/<project>/xposts', methods=['GET'])
+@cross_origin()
+def get_xposts(project):
+    """Return all indexed X posts with metadata and local media paths."""
+    config = _get_config()
+    data_dir = config.data_dir
+    base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
+
+    serve_files = data_dir if data_dir.startswith('/') else os.path.normpath(
+        os.path.join(base_dir, data_dir)
+    )
+
+    x_urls_file = os.path.join(serve_files, 'x.json')
+    if not os.path.exists(x_urls_file):
+        return jsonify([])
+
+    try:
+        with open(x_urls_file, 'r') as f:
+            x_urls = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return jsonify([])
+
+    if not isinstance(x_urls, list):
+        return jsonify([])
+
+    posts = []
+    for raw_url in x_urls:
+        url_str = raw_url if isinstance(raw_url, str) else (raw_url or {}).get('name', '')
+        tweet_match = re.search(r'/status/(\d+)', url_str)
+        if not tweet_match:
+            continue
+        tweet_id = tweet_match.group(1)
+
+        post_data = {}
+        post_json_path = os.path.join(serve_files, tweet_id, 'post.json')
+        if os.path.exists(post_json_path):
+            try:
+                with open(post_json_path, 'r') as f:
+                    post_data = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        def _media_paths(asset_type):
+            paths = []
+            for asset in post_data.get('assets', {}).get(asset_type, []):
+                if asset.get('status') == 'downloaded' and asset.get('local_path'):
+                    filename = os.path.basename(asset['local_path'])
+                    paths.append(f"{tweet_id}/{asset_type}/{filename}")
+            return paths
+
+        posts.append({
+            'tweet_id': tweet_id,
+            'post_url': post_data.get('post_url', url_str),
+            'text': post_data.get('text', ''),
+            'created_at': post_data.get('created_at', ''),
+            'author': post_data.get('author', {}),
+            'images': _media_paths('images'),
+            'videos': _media_paths('videos'),
+            'audio': _media_paths('audio'),
+            'has_snapshot': bool(post_data),
+        })
+
+    return jsonify(posts)
+
+
+@rag_bp.route('/prompt/<project>/xposts/chat', methods=['POST'])
+@cross_origin()
+def xposts_chat(project):
+    """Answer a question using all X posts as context (bypasses vector search)."""
+    config = _get_config()
+    state = _get_state()
+    data_dir = config.data_dir
+    base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
+
+    prompt_text = request.form.get('prompt', '').strip()
+    if not prompt_text:
+        return make_response("Prompt parameter is required", 400)
+
+    serve_files = data_dir if data_dir.startswith('/') else os.path.normpath(
+        os.path.join(base_dir, data_dir)
+    )
+
+    x_urls_file = os.path.join(serve_files, 'x.json')
+    if not os.path.exists(x_urls_file):
+        return make_response("No X posts found for this project", 404)
+
+    try:
+        with open(x_urls_file, 'r') as f:
+            x_urls = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return make_response(f"Failed to load X posts index: {e}", 500)
+
+    lines = []
+    for raw_url in (x_urls if isinstance(x_urls, list) else []):
+        url_str = raw_url if isinstance(raw_url, str) else (raw_url or {}).get('name', '')
+        tweet_match = re.search(r'/status/(\d+)', url_str)
+        if not tweet_match:
+            continue
+        tweet_id = tweet_match.group(1)
+        post_json_path = os.path.join(serve_files, tweet_id, 'post.json')
+        if not os.path.exists(post_json_path):
+            continue
+        try:
+            with open(post_json_path, 'r') as f:
+                p = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        author = p.get('author', {})
+        handle = author.get('username', '')
+        name = author.get('name', '')
+        date = (p.get('created_at', '') or '')[:10]
+        text = (p.get('text', '') or '').replace('\n', ' ')
+        stats = p.get('stats', {}) or {}
+        likes = stats.get('favorite_count', 0)
+        rts = stats.get('retweet_count', 0)
+        url = p.get('post_url', url_str)
+        lines.append(
+            f"[@{handle} ({name}) | {date} | likes:{likes} rts:{rts} | {url}]\n{text}"
+        )
+
+    if not lines:
+        return make_response("No X post data available", 404)
+
+    posts_context = "\n\n---\n\n".join(lines)
+    system_msg = (
+        "You are a helpful analyst. Below are all X (Twitter) posts available. "
+        "Answer the user's question using ONLY this data. "
+        "Cite specific authors and posts when relevant. "
+        "If aggregating (top authors, counts, etc.), compute from the full list provided.\n\n"
+        f"=== X POSTS ===\n{posts_context}\n=== END OF POSTS ==="
+    )
+
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage as LCHumanMessage
+        chat_model = state['LLM']
+        messages = [
+            SystemMessage(content=system_msg),
+            LCHumanMessage(content=prompt_text),
+        ]
+
+        def generate():
+            try:
+                for chunk in chat_model.stream(messages):
+                    if chunk.content:
+                        yield chunk.content
+            except Exception as stream_err:
+                logging.error("Streaming error in xposts_chat: %s", stream_err)
+                yield f"\n[Error: {stream_err}]"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/plain',
+            headers={'X-Accel-Buffering': 'no'},
+        )
+    except Exception as e:
+        logging.error("Error in xposts_chat: %s", e)
+        return make_response(f"Error processing request: {e}", 500)
 
 
 # ---------------------------------------------------------------------------
