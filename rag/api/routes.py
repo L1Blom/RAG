@@ -803,6 +803,18 @@ def upload_x_urls_batch(project):
         except Exception as e:
             results['failed'] += 1
             results['urls'].append({'url': url, 'error': str(e), 'status': 'error'})
+            err_str = str(e)
+            if 'dimensionality' in err_str or 'dimension' in err_str.lower():
+                error_msg = (
+                    f"Embedding dimension mismatch for {url}: {e}. "
+                    "The vectorstore was created with a different embedding model. "
+                    "Either switch back to the original embedding model in Settings, "
+                    "or use the Clear button to wipe the vectorstore and re-index with the current model."
+                )
+                # Stop processing — every subsequent URL will fail with the same error.
+                errors.append(error_msg)
+                logging.error(error_msg)
+                break
             error_msg = f"Error processing X post {url}: {e}"
             errors.append(error_msg)
             logging.error(error_msg)

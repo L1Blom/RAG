@@ -14,6 +14,8 @@ import html
 from typing import Dict, Any, List, Optional
 from urllib.parse import urlparse
 
+logger = logging.getLogger(__name__)
+
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -93,7 +95,7 @@ class XLoaderStrategy:
         import time
         
         if not self.api_token:
-            logging.error("X API token not configured. Set X_API_KEY environment variable.")
+            logger.error("X API token not configured. Set X_API_KEY environment variable.")
             return None
         
         headers = {
@@ -118,38 +120,50 @@ class XLoaderStrategy:
                 )
                 
                 # Debug: log response status and first part of response
-                logging.debug(f"X API response status: {response.status_code}")
-                logging.debug(f"X API response headers: {response.headers.get('content-type')}")
+                logger.debug(f"X API response status: {response.status_code}")
+                logger.debug(f"X API response headers: {response.headers.get('content-type')}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     # Check if response contains actual tweet data or error
                     if 'data' not in data:
-                        logging.error(f"X API returned 200 but no 'data' field: {str(data)[:500]}")
+                        logger.error(f"X API returned 200 but no 'data' field: {str(data)[:500]}")
                         return None
                     return data
                 elif response.status_code == 401:
-                    logging.error("X API authentication failed. Check your API key.")
+                    logger.error("X API authentication failed. Check your API key.")
                     return None
                 elif response.status_code == 404:
-                    logging.error(f"Tweet {tweet_id} not found.")
+                    logger.error(f"Tweet {tweet_id} not found.")
                     return None
                 elif response.status_code == 429:
-                    # Rate limited - exponential backoff
-                    wait_time = (2 ** attempt) * 2  # 2, 4, 8 seconds
-                    logging.warning(f"X API rate limit exceeded. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                    # Honour the reset timestamp the API returns; fall back to
+                    # a 15-minute window if the header is missing.
+                    reset_header = (
+                        response.headers.get('x-rate-limit-reset')
+                        or response.headers.get('Retry-After')
+                    )
+                    if reset_header and reset_header.isdigit():
+                        wait_time = max(int(reset_header) - int(time.time()) + 5, 10)
+                    else:
+                        wait_time = 900  # 15 minutes — full reset window
+                    wait_time = min(wait_time, 900)  # cap at 15 min
+                    logger.warning(
+                        f"X API rate limit exceeded. Retrying in {wait_time}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
                     time.sleep(wait_time)
                     continue
                 else:
-                    logging.error(f"X API error: {response.status_code} - {response.text[:500]}")
+                    logger.error(f"X API error: {response.status_code} - {response.text[:500]}")
                     return None
                     
             except requests.RequestException as e:
-                logging.error(f"Error fetching tweet from X API: {e}")
+                logger.error(f"Error fetching tweet from X API: {e}")
                 return None
         
         # All retries exhausted
-        logging.error(f"Failed to fetch tweet {tweet_id} after {max_retries} attempts due to rate limiting")
+        logger.error(f"Failed to fetch tweet {tweet_id} after {max_retries} attempts due to rate limiting")
         return None
     
     def _tweet_to_document(self, tweet_data: Dict[str, Any], url: str = '') -> Document:
@@ -418,14 +432,14 @@ class XLoaderStrategy:
         try:
             response = requests.get(url, timeout=timeout, stream=True)
             if response.status_code != 200:
-                logging.warning("Failed downloading asset %s: HTTP %s", url, response.status_code)
+                logger.warning("Failed downloading asset %s: HTTP %s", url, response.status_code)
                 return False
 
             content_length = response.headers.get('Content-Length')
             if content_length is not None:
                 try:
                     if int(content_length) > max_bytes:
-                        logging.warning("Skipping oversized asset %s (%s bytes)", url, content_length)
+                        logger.warning("Skipping oversized asset %s (%s bytes)", url, content_length)
                         return False
                 except ValueError:
                     pass
@@ -440,7 +454,7 @@ class XLoaderStrategy:
                         continue
                     downloaded += len(chunk)
                     if downloaded > max_bytes:
-                        logging.warning("Aborting oversized streamed asset %s", url)
+                        logger.warning("Aborting oversized streamed asset %s", url)
                         file.close()
                         try:
                             os.remove(safe_target_path)
@@ -450,10 +464,10 @@ class XLoaderStrategy:
                     file.write(chunk)
             return True
         except requests.RequestException as exc:
-            logging.warning("Failed downloading asset %s: %s", url, exc)
+            logger.warning("Failed downloading asset %s: %s", url, exc)
             return False
         except OSError as exc:
-            logging.warning("Failed writing asset %s: %s", url, exc)
+            logger.warning("Failed writing asset %s: %s", url, exc)
             return False
 
     def _persist_post_snapshot(self, post_dir: str, post_json: Dict[str, Any], post_text: str) -> None:
@@ -521,10 +535,10 @@ class XLoaderStrategy:
         valid_urls = [url for url in x_urls if self._is_x_url(url)]
         
         if not valid_urls:
-            logging.warning("No valid X URLs found in provided list")
+            logger.warning("No valid X URLs found in provided list")
             return 0
         
-        logging.info(f"Loading {len(valid_urls)} X posts")
+        logger.info(f"Loading {len(valid_urls)} X posts")
         
         documents = []
         data_dir = config.get('data_dir', '')
@@ -535,12 +549,51 @@ class XLoaderStrategy:
         for url in valid_urls:
             tweet_id = self._extract_tweet_id(url)
             if not tweet_id:
-                logging.warning(f"Could not extract tweet ID from URL: {url}")
+                logger.warning(f"Could not extract tweet ID from URL: {url}")
                 continue
-            
+
+            # Skip the API call when a local snapshot already exists.
+            if data_dir:
+                existing_snapshot = os.path.join(data_dir, tweet_id, 'post.json')
+                if os.path.exists(existing_snapshot):
+                    logger.info(f"Skipping API fetch for {tweet_id}: local snapshot exists")
+                    try:
+                        with open(existing_snapshot, 'r') as _f:
+                            _snap = json.load(_f)
+                        _txt_path = os.path.join(data_dir, tweet_id, 'post.txt')
+                        _text = ''
+                        if os.path.exists(_txt_path):
+                            with open(_txt_path, 'r') as _f:
+                                _text = _f.read()
+                        if not _text:
+                            _text = str(_snap.get('text', '')).strip()
+                        if _text:
+                            _author = _snap.get('author', {})
+                            _assets = _snap.get('assets', {})
+                            _doc = Document(
+                                page_content=_text,
+                                metadata={
+                                    'source': 'x',
+                                    'tweet_id': tweet_id,
+                                    'post_url': url,
+                                    'author_username': _author.get('username', 'unknown'),
+                                    'created_at': _snap.get('created_at', ''),
+                                    'snapshot_path': existing_snapshot,
+                                    'text_path': _txt_path,
+                                    'images_count': len(_assets.get('images', [])),
+                                    'videos_count': len(_assets.get('videos', [])),
+                                    'audio_count': len(_assets.get('audio', [])),
+                                    'indexing_mode': 'text_only',
+                                },
+                            )
+                            documents.append(_doc)
+                    except (OSError, json.JSONDecodeError, KeyError) as _e:
+                        logger.warning(f"Could not load snapshot for {tweet_id}: {_e}")
+                    continue
+
             tweet_data = self._fetch_tweet(tweet_id)
             if not tweet_data:
-                logging.warning(f"Failed to fetch tweet: {url} (ID: {tweet_id})")
+                logger.warning(f"Failed to fetch tweet: {url} (ID: {tweet_id})")
                 continue
             
             try:
@@ -623,12 +676,12 @@ class XLoaderStrategy:
                 }
                 doc = Document(page_content=post_text, metadata=metadata)
                 documents.append(doc)
-                logging.info(f"Loaded tweet {tweet_id} from {url}")
+                logger.info(f"Loaded tweet {tweet_id} from {url}")
             except Exception as e:
-                logging.error(f"Error processing tweet {tweet_id}: {e}")
+                logger.error(f"Error processing tweet {tweet_id}: {e}")
         
         if not documents:
-            logging.warning("No documents loaded from X URLs")
+            logger.warning("No documents loaded from X URLs")
             return 0
 
         return self._split_and_store_documents(documents, config, vectorstore)
@@ -649,13 +702,13 @@ class XLoaderStrategy:
 
         splits = filter_complex_metadata(splits)
         vectorstore.add_documents(splits)
-        logging.info("Loaded %d X document splits into vector store", len(splits))
+        logger.info("Loaded %d X document splits into vector store", len(splits))
         return len(splits)
 
     def _load_local_snapshot_documents(self, data_dir: str) -> List[Document]:
         """Load X post documents from local snapshots under data/<tweet_id>."""
         if not data_dir or not os.path.isdir(data_dir):
-            logging.info("No local X snapshot directory found at: %s", data_dir)
+            logger.info("No local X snapshot directory found at: %s", data_dir)
             return []
 
         documents: List[Document] = []
@@ -673,7 +726,7 @@ class XLoaderStrategy:
                 with open(post_json_path, 'r') as file:
                     post_data = json.load(file)
             except (OSError, json.JSONDecodeError) as exc:
-                logging.warning("Skipping invalid X snapshot %s: %s", post_json_path, exc)
+                logger.warning("Skipping invalid X snapshot %s: %s", post_json_path, exc)
                 continue
 
             post_text = ''
@@ -682,7 +735,7 @@ class XLoaderStrategy:
                     with open(post_txt_path, 'r') as file:
                         post_text = file.read()
                 except OSError as exc:
-                    logging.warning("Could not read snapshot text %s: %s", post_txt_path, exc)
+                    logger.warning("Could not read snapshot text %s: %s", post_txt_path, exc)
             if not post_text:
                 post_text = str(post_data.get('text', '')).strip()
             if not post_text:
@@ -705,7 +758,7 @@ class XLoaderStrategy:
             }
             documents.append(Document(page_content=post_text, metadata=metadata))
 
-        logging.info("Loaded %d local X snapshot documents", len(documents))
+        logger.info("Loaded %d local X snapshot documents", len(documents))
         return documents
     
     def _load_x_urls(self, data_dir: str) -> Optional[List[str]]:
@@ -728,12 +781,12 @@ class XLoaderStrategy:
                     return []
                 contents = json.loads(contents)
                 if not isinstance(contents, list):
-                    logging.error("x.json file does not contain a list")
+                    logger.error("x.json file does not contain a list")
                     return None
-                logging.info("Found %d X URLs in x.json", len(contents))
+                logger.info("Found %d X URLs in x.json", len(contents))
                 return contents
         except json.JSONDecodeError as e:
-            logging.error("Error reading x.json file: %s", e)
+            logger.error("Error reading x.json file: %s", e)
             return None
 
     def load_single(self, url: str, config: Dict[str, Any], vectorstore: Chroma) -> int:
