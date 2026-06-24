@@ -127,6 +127,59 @@ Optional: add confirmation dialog before invoking reload.
 3. Update reload wording in `Reload.jsx`.
 4. Add upload summary parsing for better UX.
 
+## X Posts Chat (`/prompt/<project>/xposts/chat`)
+
+### Streaming + Map-Reduce
+
+The `xposts/chat` endpoint streams answers and uses map-reduce when posts
+exceed the model's context window:
+
+1. **Batching**: Posts are split by `xposts_batch_chars` (INI key, default
+   `20000` chars in code, `100000` in the template for large-context models).
+2. **Map** (parallel, 4 workers): Each batch extracts facts and per-batch
+   stats via `chat_model.invoke()`. Progress markers `[Analyzing N/M...]`
+   are streamed to the client.
+3. **Reduce** (streamed): A deterministic author stats table (post counts,
+   likes, retweets computed from raw data) is included alongside batch
+   findings. The synthesis answer streams token-by-token.
+4. **Inline images**: After the answer streams, `[[IMG:path]]` markers are
+   inserted inline after cited post URLs that have downloaded images
+   (limited to `xposts_max_images`, default 5).
+
+### Enhanced Answer Protocol
+
+The backend sends a `<<<ENHANCED_ANSWER>>>` delimiter after the plain
+answer, followed by the enhanced version with inline image markers:
+
+```
+<plain answer text>
+<<<ENHANCED_ANSWER>>>
+<enhanced answer with [[IMG:path]] markers inline>
+```
+
+The frontend (`Chat.jsx`) displays the plain answer during streaming, then
+swaps to the enhanced version when the delimiter arrives. Progress markers
+are stripped before saving to chat history.
+
+### Frontend Rendering (`Message.jsx`)
+
+The `format()` function in `Message.jsx`:
+
+1. Converts `[[IMG:path]]` markers to `<img class="inline-post-img">` HTML
+   tags (floated right, 35% max-width, clickable to open full-size).
+2. Shortens X post URLs to `[post](url)` markdown links in both display
+   and download.
+3. Uses `rehypeRaw` in ReactMarkdown only when images are present.
+4. The download button exports the answer as `.md` with absolute image URLs
+   (prefixed with `window.location.origin`).
+
+### Config Keys
+
+| Key | Default | Section | Purpose |
+|-----|---------|---------|---------|
+| `xposts_batch_chars` | 20000 (code) / 100000 (template) | `[DEFAULT]` | Max chars per LLM batch in map-reduce |
+| `xposts_max_images` | 5 | `[DEFAULT]` | Max inline images per answer |
+
 ## QA Checklist
 
 - Upload valid X URL -> row appears with tweet id and counts.
@@ -134,3 +187,7 @@ Optional: add confirmation dialog before invoking reload.
 - Expand row -> `post.json` and `post.txt` accessible.
 - Asset links open files from `images/`, `videos/`, `audio/`.
 - Reload -> after completion, prompts still work and X content remains retrievable.
+- X posts chat -> answer streams token-by-token.
+- X posts chat with many posts -> progress markers `[Analyzing N/M...]` appear, then final answer.
+- Cited posts with images -> images appear inline (floated right) after the post URL.
+- Download button -> `.md` file with `[post](url)` links and `![image](absolute-url)` syntax.

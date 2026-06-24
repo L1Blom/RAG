@@ -118,7 +118,7 @@ rag/
 
 | Module | Purpose |
 |--------|---------|
-| **routes.py** | Flask Blueprint (`rag_bp`) with all HTTP endpoints extracted from the legacy `ragservice.py`. |
+| **routes.py** | Flask Blueprint (`rag_bp`) with all HTTP endpoints: prompt, streaming prompt, X posts map-reduce chat, file upload/serving, model/embedding management, and image processing. |
 | **middleware.py** | `setup_middleware()` – CORS, preflight handling, HTTP-error and unhandled-exception catchers. |
 
 ### Utilities (`rag/utils/`)
@@ -132,6 +132,8 @@ rag/
 
 ## Data Flow
 
+### Standard RAG prompt (`/prompt/<project>`)
+
 ```
 1. Client  ──HTTP──▸  Flask (middleware)
 2. Flask   ──route──▸  routes.py handler
@@ -142,6 +144,41 @@ rag/
                     ▸  EmbeddingsService.embeddings
 5. Response ◂───────  APIResponse / make_response
 ```
+
+### Streaming RAG prompt (`/prompt/<project>/stream`)
+
+Same as standard prompt, but step 4 uses `chain.stream()` instead of
+`chain.invoke()`. The `RunnableWithMessageHistory.stream()` persists chat
+history via listener-based `on_end` callbacks. Chunks are dicts with an
+`answer` key; the route yields `chunk['answer']` tokens. Response uses
+`stream_with_context` + `X-Accel-Buffering: no` header.
+
+### X posts analysis (`/prompt/<project>/xposts/chat`)
+
+```
+1. Client  ──HTTP──▸  Flask (middleware)
+2. Handler  ────────▸  Load all posts from x.json + per-post post.json
+                    ▸  Build author_stats (deterministic aggregation)
+                    ▸  Build post_images (tweet_id → image paths)
+                    ▸  _batch_posts(lines, xposts_batch_chars)
+3. If 1 batch:
+     ──stream──▸  chat_model.stream(direct-answer prompt)
+   Else (map-reduce):
+     ──map─────▸  ThreadPoolExecutor(4 workers)
+                ▸  chat_model.invoke() per batch (parallel)
+                ▸  yield [Analyzing N/M...] progress markers
+     ──reduce──▸  chat_model.stream(reduce prompt + stats table)
+4. After answer streams:
+     ─────────▸  _build_enhanced_answer()
+                ▸  Scan answer for cited /status/<id> URLs
+                ▸  Insert [[IMG:path]] markers inline after URLs
+                ▸  Yield <<<ENHANCED_ANSWER>>> delimiter + enhanced text
+5. Response ◂───────  stream_with_context, text/plain
+```
+
+The frontend receives the plain answer during streaming (progress markers
+stripped), then swaps to the enhanced version (with inline images) when
+the `<<<ENHANCED_ANSWER>>>` delimiter arrives.
 
 ## Migration Path
 

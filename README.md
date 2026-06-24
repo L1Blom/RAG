@@ -39,7 +39,19 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Your prompt to be send
 
-2. /prompt/\<ID\>/full
+2. /prompt/\<ID\>/stream
+
+    Parameter: prompt (string)
+
+    Your prompt to be send
+
+    Streams the answer token-by-token (text/plain, chunked transfer encoding).
+    Uses the same RAG chain and session history as `/prompt/<ID>/` but via
+    `chain.stream()` instead of `chain.invoke()`. Requires
+    `X-Accel-Buffering: no` header (set automatically) and nginx
+    `proxy_buffering off` for the streaming location.
+
+3. /prompt/\<ID\>/full
 
     Parameter: prompt (string)
 
@@ -47,7 +59,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Returns all document fragments used for this prompt
 
-3. /prompt/\<ID\>/search
+4. /prompt/\<ID\>/search
 
     Parameter: prompt (string)
 
@@ -55,7 +67,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Similar search in the local documents, returns fragments and scores
 
-4. /prompt/\<ID\>/model
+5. /prompt/\<ID\>/model
 
     Parameter: model (string)
 
@@ -63,7 +75,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Checking on valid models with OpenAI client.models.list(). Can result in http 500 error (non-fatal)
 
-5. /prompt/\<ID\>/temp
+6. /prompt/\<ID\>/temp
 
     Parameter: temp (string, will be cast to float)
 
@@ -73,7 +85,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Timeout can result in http 408 error (non-fatal)
 
-6. /prompt/\<ID\>/reload
+7. /prompt/\<ID\>/reload
 
     Parameters: none
 
@@ -86,31 +98,31 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     For X posts, reload uses local snapshots (`data/<tweet_id>/post.json` + `post.txt`) and does not need a refetch.
 
-7. /prompt/\<ID\>/clear
+8. /prompt/\<ID\>/clear
 
     Paramters: none
 
     Clears the cache, the in-memory history
 
-8. /prompt/\<ID\>/cache
+9. /prompt/\<ID\>/cache
 
     Paramaters: none
 
     Prints the cache contents to the response object
 
-9. /prompt/\<ID\>/modelnames
+10. /prompt/\<ID\>/modelnames
 
     Paramaters: none
 
     Prints the names of the possible models used in the selected APIs
 
-10. /prompt/\<ID\>/params
+11. /prompt/\<ID\>/params
 
     Paramaters: section (string), param (string)
 
     Prints the settings from the .ini file
 
-11. /prompt/\<ID\>/image
+12. /prompt/\<ID\>/image
 
     Parameters: prompt (string), image (URL to image)
 
@@ -118,7 +130,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
 
     Note: only works if model is set to 'gpt-4o'. Other models result in http 500 error (non-fatal)
 
-12. /prompt/\<ID\>/upload
+13. /prompt/\<ID\>/upload
 
     Parameters: file (string) (maximum size 16 Mb)
 
@@ -126,7 +138,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
     If not, results in http 500 error (non-fatal)
 
 
-13. /prompt/\<ID\>/uploadx
+14. /prompt/\<ID\>/uploadx
 
     Parameters: url (string) - X (Twitter) post URL
 
@@ -152,7 +164,7 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
     - Text content is indexed.
     - Video and audio are downloaded for later use and are not indexed/transformed yet.
 
-14. /prompt/<ID>/uploadx/batch
+15. /prompt/<ID>/uploadx/batch
 
     Parameters: file (JSON array or text file, one URL per line)
 
@@ -163,6 +175,34 @@ All calls support POST and GET. For \<ID\> use your chosen ID like MyDocs
     - Processes each valid URL sequentially.
     - Stores URLs in `x.json` and writes local per-post snapshots.
     - Returns a summary of successful and failed URLs.
+
+16. /prompt/\<ID\>/xposts/chat
+
+    Parameters: prompt (string)
+
+    Answers a question using all X posts as context (bypasses vector search).
+
+    When the full post set exceeds a single LLM context window, posts are
+    processed via map-reduce:
+    - Posts are split into character-budgeted batches (configurable via
+      `xposts_batch_chars` in the INI file).
+    - Each batch is analyzed in parallel (4 workers via ThreadPoolExecutor),
+      extracting facts and per-batch statistics.
+    - A deterministic author stats table (post counts, likes, retweets) is
+      computed from all posts and included in the reduce prompt for accurate
+      aggregation queries.
+    - A final synthesis step combines all batch findings into one streamed
+      answer.
+    - After the answer streams, `[[IMG:path]]` markers are inserted inline
+      after cited post URLs that have downloaded images. Images are limited
+      to `xposts_max_images` (default 5).
+
+    Response is streamed (text/plain, chunked). Progress markers
+    `[Analyzing N/M...]` are emitted during batch processing and stripped
+    by the frontend before saving to chat history.
+
+    If all posts fit in one batch, a single-batch shortcut streams a direct
+    answer with no map-reduce overhead.
 
 ## Usage
 
@@ -196,6 +236,22 @@ PERSISTENCE = data/_unittest/vectorstore
 HTML = data/_unittest/html
 ```
 
+### X Posts configuration
+
+The following INI keys control the `xposts/chat` map-reduce behavior:
+
+```ini
+# Max characters of X posts per LLM batch in map-reduce. Lower this for
+# small-context models (e.g. 20000 for 8K-token models).
+xposts_batch_chars = 100000
+
+# Max number of images to embed in the answer for cited posts.
+xposts_max_images = 5
+```
+
+Both keys are read from the `[DEFAULT]` section of the project's INI file.
+If absent, the code defaults to `20000` chars and `5` images respectively.
+
 ## Unit tests
 
 To run the unit tests, run the program in the project directory using the ID '_unittest'.
@@ -210,6 +266,7 @@ See below all possible API-calls and paramters:
 INFO:root:Working directory is /home/leen/projects/rag
 INFO:httpx:HTTP Request: GET https://api.openai.com/v1/models "HTTP/1.1 200 OK"
 INFO:root:path -> /prompt/_unittest prompt
+INFO:root:path -> /prompt/_unittest/stream prompt
 INFO:root:path -> /prompt/_unittest/full prompt
 INFO:root:path -> /prompt/_unittest/search prompt,similar
 INFO:root:path -> /prompt/_unittest/documents id
