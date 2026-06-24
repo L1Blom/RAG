@@ -76,6 +76,41 @@ def _encode_image(image_url: str) -> str:
     return image
 
 
+def _batch_posts(lines, max_chars):
+    """Group post strings into batches that fit within *max_chars* characters.
+
+    Each returned element is the joined text of its constituent posts.  At
+    least one batch is always returned, even if a single post exceeds the
+    budget (it lands in its own batch).
+    """
+    if not lines:
+        return []
+    sep = "\n\n---\n\n"
+    sep_len = len(sep)
+    batches = []
+    current = []
+    current_len = 0
+    for line in lines:
+        add_len = len(line) + (sep_len if current else 0)
+        if current and current_len + add_len > max_chars:
+            batches.append(sep.join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += add_len
+    if current:
+        batches.append(sep.join(current))
+    return batches
+
+
+def _parse_prompt():
+    """Extract prompt text from request, handling GET and POST."""
+    if request.method == 'GET':
+        return request.values.get('prompt')
+    return request.form.get('prompt')
+
+
 # ---------------------------------------------------------------------------
 # Chain management
 # ---------------------------------------------------------------------------
@@ -164,10 +199,7 @@ def prompt(project):
     """Process a prompt and return the answer text."""
     state = _get_state()
     try:
-        if request.method == 'GET':
-            prompt_text = request.values.get('prompt')
-        else:
-            prompt_text = request.form.get('prompt')
+        prompt_text = _parse_prompt()
         if not prompt_text:
             return make_response("Prompt parameter is required", 400)
 
@@ -182,6 +214,41 @@ def prompt(project):
         return make_response(f"Error processing prompt, due to {e}", 500)
     except Exception as e:
         logging.error("Unexpected error in prompt: %s", e)
+        return make_response(f"Error processing prompt, due to {e}", 500)
+
+
+@rag_bp.route('/prompt/<project>/stream', methods=['GET', 'POST'])
+@cross_origin()
+def prompt_stream(project):
+    """Process a prompt and stream the answer tokens back."""
+    state = _get_state()
+    try:
+        prompt_text = _parse_prompt()
+        if not prompt_text:
+            return make_response("Prompt parameter is required", 400)
+
+        chain = state['Chain']
+        run_cfg = {"configurable": {"session_id": str(state['Session'])}}
+
+        def generate():
+            try:
+                for chunk in chain.stream({"input": prompt_text}, config=run_cfg):
+                    if isinstance(chunk, dict) and chunk.get('answer'):
+                        yield chunk['answer']
+            except Exception as stream_err:
+                logging.error("Streaming error in prompt_stream: %s", stream_err)
+                yield f"\n[Error: {stream_err}]"
+
+        return Response(
+            stream_with_context(generate()),
+            mimetype='text/plain',
+            headers={'X-Accel-Buffering': 'no'},
+        )
+    except HTTPException as e:
+        logging.error("Error processing prompt stream: %s", e)
+        return make_response(f"Error processing prompt, due to {e}", 500)
+    except Exception as e:
+        logging.error("Unexpected error in prompt stream: %s", e)
         return make_response(f"Error processing prompt, due to {e}", 500)
 
 
@@ -913,9 +980,17 @@ def get_xposts(project):
 @rag_bp.route('/prompt/<project>/xposts/chat', methods=['POST'])
 @cross_origin()
 def xposts_chat(project):
-    """Answer a question using all X posts as context (bypasses vector search)."""
+    """Answer a question using all X posts as context (bypasses vector search).
+
+    When the full post set exceeds a single LLM context window, posts are
+    processed via map-reduce: each batch is analyzed in parallel, then a
+    final synthesis step combines all batch findings into one streamed
+    answer.  Every post is seen by the model so aggregation queries remain
+    accurate.
+    """
     config = _get_config()
     state = _get_state()
+    config_service = _get_service('CONFIG_SERVICE')
     data_dir = config.data_dir
     base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
 
@@ -938,6 +1013,8 @@ def xposts_chat(project):
         return make_response(f"Failed to load X posts index: {e}", 500)
 
     lines = []
+    author_stats = {}
+    post_images = {}
     for raw_url in (x_urls if isinstance(x_urls, list) else []):
         url_str = raw_url if isinstance(raw_url, str) else (raw_url or {}).get('name', '')
         tweet_match = re.search(r'/status/(\d+)', url_str)
@@ -964,44 +1041,156 @@ def xposts_chat(project):
         lines.append(
             f"[@{handle} ({name}) | {date} | likes:{likes} rts:{rts} | {url}]\n{text}"
         )
+        if handle:
+            entry = author_stats.setdefault(handle, {'name': name, 'posts': 0, 'likes': 0, 'rts': 0})
+            entry['posts'] += 1
+            entry['likes'] += likes
+            entry['rts'] += rts
+        for asset in (p.get('assets', {}).get('images', []) or []):
+            if asset.get('status') == 'downloaded' and asset.get('local_path'):
+                filename = os.path.basename(asset['local_path'])
+                img_path = f"{tweet_id}/images/{filename}"
+                if img_path not in post_images.setdefault(tweet_id, []):
+                    post_images[tweet_id].append(img_path)
 
     if not lines:
         return make_response("No X post data available", 404)
 
-    posts_context = "\n\n---\n\n".join(lines)
-    system_msg = (
-        "You are a helpful analyst. Below are all X (Twitter) posts available. "
-        "Answer the user's question using ONLY this data. "
-        "Cite specific authors and posts when relevant. "
-        "If aggregating (top authors, counts, etc.), compute from the full list provided.\n\n"
-        f"=== X POSTS ===\n{posts_context}\n=== END OF POSTS ==="
-    )
+    batch_chars = config_service.get_int('DEFAULT', 'xposts_batch_chars', default=20000)
+    batches = _batch_posts(lines, batch_chars)
+    total_batches = len(batches)
 
-    try:
-        from langchain_core.messages import SystemMessage, HumanMessage as LCHumanMessage
-        chat_model = state['LLM']
-        messages = [
-            SystemMessage(content=system_msg),
-            LCHumanMessage(content=prompt_text),
-        ]
+    from langchain_core.messages import SystemMessage, HumanMessage as LCHumanMessage
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    chat_model = state['LLM']
 
-        def generate():
-            try:
+    def _map_messages(batch_text, batch_num):
+        system_msg = (
+            "You are a helpful analyst. Below is one batch of X (Twitter) posts. "
+            "Extract the facts, authors, and statistics relevant to the user's question. "
+            "Be concise but preserve all author handles and post URLs for citation. "
+            "If the question involves aggregation (counts, rankings, totals), "
+            "compute the values for THIS batch only.\n\n"
+            f"=== X POSTS (batch {batch_num} of {total_batches}) ===\n"
+            f"{batch_text}\n=== END OF POSTS ==="
+        )
+        return [SystemMessage(content=system_msg), LCHumanMessage(content=prompt_text)]
+
+    def _process_batch(batch_text, batch_num):
+        messages = _map_messages(batch_text, batch_num)
+        result = chat_model.invoke(messages)
+        return result.content if hasattr(result, 'content') else str(result)
+
+    def _reduce_messages(batch_answers):
+        combined = "\n\n".join(
+            f"--- Batch {i+1} findings ---\n{ans}"
+            for i, ans in enumerate(batch_answers) if ans
+        )
+        stats_table = ""
+        if author_stats:
+            ranked = sorted(author_stats.items(), key=lambda x: x[1]['posts'], reverse=True)
+            stat_lines = [
+                f"@{h} ({v['name']}): {v['posts']} posts, {v['likes']} likes, {v['rts']} RTs"
+                for h, v in ranked
+            ]
+            stats_table = (
+                "\n\n=== GLOBAL AUTHOR STATS (computed deterministically from all posts) ===\n"
+                + "\n".join(stat_lines)
+                + "\n=== END STATS ==="
+            )
+        system_msg = (
+            "You are a helpful analyst. Below are findings extracted from batches "
+            "of X (Twitter) posts, followed by a deterministic global stats table. "
+            "Synthesize a single, coherent answer to the user's question. "
+            "Use the global stats table for any aggregation (counts, rankings, totals). "
+            "Use the batch findings for qualitative insights and citations. "
+            "Cite specific authors and post URLs when relevant.\n\n"
+            f"=== BATCH FINDINGS ===\n{combined}\n=== END OF FINDINGS ==="
+            f"{stats_table}"
+        )
+        return [SystemMessage(content=system_msg), LCHumanMessage(content=prompt_text)]
+
+    def _build_enhanced_answer(answer_text):
+        """Insert [[IMG:path]] markers inline after cited post URLs that have images."""
+        if not post_images:
+            return None
+        seen = set()
+        emitted = set()
+        max_images = config_service.get_int('DEFAULT', 'xposts_max_images', default=5)
+        img_count = [0]
+
+        def insert_images(match):
+            tid = match.group(1)
+            if tid in seen or tid not in post_images or img_count[0] >= max_images:
+                return match.group(0)
+            seen.add(tid)
+            url = match.group(0)
+            markers = ""
+            for path in post_images[tid]:
+                if img_count[0] >= max_images:
+                    break
+                if path in emitted:
+                    continue
+                emitted.add(path)
+                markers += f"[[IMG:{path}]]"
+                img_count[0] += 1
+            return url + markers
+
+        enhanced = re.sub(r'https?://[^\s\)]+/status/(\d+)[^\s\)]*', insert_images, answer_text)
+        return enhanced if img_count[0] > 0 else None
+
+    def generate():
+        try:
+            batch_answers = [None] * total_batches
+
+            if total_batches == 1:
+                messages = [SystemMessage(content=(
+                    "You are a helpful analyst. Below are all X (Twitter) posts available. "
+                    "Answer the user's question using ONLY this data. "
+                    "Cite specific authors and posts when relevant. "
+                    "If aggregating (top authors, counts, etc.), compute from the full list provided.\n\n"
+                    f"=== X POSTS ===\n{batches[0]}\n=== END OF POSTS ==="
+                )), LCHumanMessage(content=prompt_text)]
+                full_answer = ""
                 for chunk in chat_model.stream(messages):
                     if chunk.content:
+                        full_answer += chunk.content
                         yield chunk.content
-            except Exception as stream_err:
-                logging.error("Streaming error in xposts_chat: %s", stream_err)
-                yield f"\n[Error: {stream_err}]"
+                enhanced = _build_enhanced_answer(full_answer)
+                if enhanced:
+                    yield f"\n<<<ENHANCED_ANSWER>>>\n{enhanced}"
+                return
 
-        return Response(
-            stream_with_context(generate()),
-            mimetype='text/plain',
-            headers={'X-Accel-Buffering': 'no'},
-        )
-    except Exception as e:
-        logging.error("Error in xposts_chat: %s", e)
-        return make_response(f"Error processing request: {e}", 500)
+            workers = min(4, total_batches)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(_process_batch, batch, i + 1): i
+                    for i, batch in enumerate(batches)
+                }
+                done = 0
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    batch_answers[idx] = future.result()
+                    done += 1
+                    yield f"[Analyzing {done}/{total_batches}...]\n"
+
+            full_answer = ""
+            for chunk in chat_model.stream(_reduce_messages(batch_answers)):
+                if chunk.content:
+                    full_answer += chunk.content
+                    yield chunk.content
+            enhanced = _build_enhanced_answer(full_answer)
+            if enhanced:
+                yield f"\n<<<ENHANCED_ANSWER>>>\n{enhanced}"
+        except Exception as stream_err:
+            logging.error("Streaming error in xposts_chat: %s", stream_err)
+            yield f"\n[Error: {stream_err}]"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/plain',
+        headers={'X-Accel-Buffering': 'no'},
+    )
 
 
 # ---------------------------------------------------------------------------
