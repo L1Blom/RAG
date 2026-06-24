@@ -3,6 +3,7 @@ __pycache__
 afk.py
 config.json
 constants/constants_[^_]*.ini
+!constants/constants_template.ini
 env/
 # Secret key files (wherever they end up at repo root)
 *.txt
