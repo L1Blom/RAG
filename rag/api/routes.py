@@ -104,6 +104,42 @@ def _batch_posts(lines, max_chars):
     return batches
 
 
+def _load_x_posts(serve_files):
+    """Load all X posts from x.json and their post.json files.
+
+    Returns a list of raw post dicts as stored by the X loader.  Each dict
+    contains keys like 'text', 'author', 'post_url', 'created_at', 'stats'.
+    Returns an empty list if no posts are found.
+    """
+    x_urls_file = os.path.join(serve_files, 'x.json')
+    if not os.path.exists(x_urls_file):
+        return []
+    try:
+        with open(x_urls_file, 'r') as f:
+            x_urls = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(x_urls, list):
+        return []
+
+    posts = []
+    for raw_url in x_urls:
+        url_str = raw_url if isinstance(raw_url, str) else (raw_url or {}).get('name', '')
+        tweet_match = re.search(r'/status/(\d+)', url_str)
+        if not tweet_match:
+            continue
+        tweet_id = tweet_match.group(1)
+        post_json_path = os.path.join(serve_files, tweet_id, 'post.json')
+        if not os.path.exists(post_json_path):
+            continue
+        try:
+            with open(post_json_path, 'r') as f:
+                posts.append(json.load(f))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return posts
+
+
 def _parse_prompt():
     """Extract prompt text from request, handling GET and POST."""
     if request.method == 'GET':
@@ -1184,6 +1220,182 @@ def xposts_chat(project):
                 yield f"\n<<<ENHANCED_ANSWER>>>\n{enhanced}"
         except Exception as stream_err:
             logging.error("Streaming error in xposts_chat: %s", stream_err)
+            yield f"\n[Error: {stream_err}]"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/plain',
+        headers={'X-Accel-Buffering': 'no'},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Weekly digest
+# ---------------------------------------------------------------------------
+
+@rag_bp.route('/prompt/<project>/digest', methods=['POST'])
+@cross_origin()
+def digest(project):
+    """Generate a weekly digest from X posts within a date range.
+
+    Scans all X posts from the past ``days`` days, runs them through
+    map-reduce with a user-provided system prompt (the digest prompt),
+    and streams the synthesized answer.
+
+    Form params:
+        prompt        (required)  user instruction / question
+        systemprompt  (optional)  digest system prompt (falls back to config)
+        days          (optional)  lookback window in days, default 7
+    """
+    config = _get_config()
+    state = _get_state()
+    config_service = _get_service('CONFIG_SERVICE')
+    data_dir = config.data_dir
+    base_dir = os.path.abspath(os.path.dirname(__file__) + '/../../') + '/'
+
+    prompt_text = request.form.get('prompt', '').strip()
+    if not prompt_text:
+        return make_response("Prompt parameter is required", 400)
+
+    system_prompt = request.form.get('systemprompt', '').strip()
+    if not system_prompt:
+        system_prompt = state.get('Prompt', config.system_prompt)
+
+    days = request.form.get('days', '7')
+    try:
+        days = int(days)
+    except (ValueError, TypeError):
+        days = 7
+    if days < 1 or days > 365:
+        days = 7
+
+    from_date = request.form.get('from_date', '').strip()
+    to_date = request.form.get('to_date', '').strip()
+
+    serve_files = data_dir if data_dir.startswith('/') else os.path.normpath(
+        os.path.join(base_dir, data_dir)
+    )
+
+    posts = _load_x_posts(serve_files)
+    if not posts:
+        return make_response("No X posts found for this project", 404)
+
+    # Date filter.
+    if from_date:
+        # Explicit date range [from_date, to_date] (inclusive).
+        if not to_date:
+            to_date = time.strftime("%Y-%m-%d", time.localtime())
+        filtered = [
+            p for p in posts
+            if from_date <= (p.get('created_at', '') or '')[:10] <= to_date
+        ]
+        range_desc = f"{from_date} to {to_date}"
+    else:
+        # Lookback: last `days` days from today.
+        cutoff_str = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+        filtered = [
+            p for p in posts
+            if (p.get('created_at', '') or '')[:10] >= cutoff_str
+        ]
+        range_desc = f"last {days} days"
+
+    if not filtered:
+        return make_response(
+            f"No X posts found in the range {range_desc}", 404
+        )
+
+    # Build line entries for each post.
+    lines = []
+    for p in filtered:
+        author = p.get('author', {})
+        handle = author.get('username', '')
+        name = author.get('name', '')
+        date = (p.get('created_at', '') or '')[:10]
+        text = (p.get('text', '') or '').replace('\n', ' ')
+        stats = p.get('stats', {}) or {}
+        likes = stats.get('favorite_count', 0)
+        rts = stats.get('retweet_count', 0)
+        url = p.get('post_url', '')
+        lines.append(
+            f"[@{handle} ({name}) | {date} | likes:{likes} rts:{rts} | {url}]\n{text}"
+        )
+
+    batch_chars = config_service.get_int('DEFAULT', 'xposts_batch_chars', default=20000)
+    batches = _batch_posts(lines, batch_chars)
+    total_batches = len(batches)
+
+    from langchain_core.messages import SystemMessage, HumanMessage as LCHumanMessage
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    chat_model = state['LLM']
+
+    def _map_messages(batch_text, batch_num):
+        system_msg = (
+            "You are a helpful analyst. Below is one batch of X (Twitter) posts. "
+            "Extract the facts, authors, and statistics relevant to the user's question. "
+            "Be concise but preserve all author handles and post URLs for citation. "
+            "If the question involves aggregation (counts, rankings, totals), "
+            "compute the values for THIS batch only.\n\n"
+            f"=== X POSTS (batch {batch_num} of {total_batches}) ===\n"
+            f"{batch_text}\n=== END OF POSTS ==="
+        )
+        return [SystemMessage(content=system_msg), LCHumanMessage(content=prompt_text)]
+
+    def _process_batch(batch_text, batch_num):
+        messages = _map_messages(batch_text, batch_num)
+        result = chat_model.invoke(messages)
+        return result.content if hasattr(result, 'content') else str(result)
+
+    def _reduce_messages(batch_answers):
+        combined = "\n\n".join(
+            f"--- Batch {i+1} findings ---\n{ans}"
+            for i, ans in enumerate(batch_answers) if ans
+        )
+        system_msg = (
+            f"{system_prompt}\n\n"
+            "Below are findings extracted from batches of X (Twitter) posts. "
+            "Synthesize a single, coherent answer to the user's question using "
+            "the instructions above. Cite specific authors and post URLs when "
+            "relevant.\n\n"
+            f"=== BATCH FINDINGS ===\n{combined}\n=== END OF FINDINGS ==="
+        )
+        return [SystemMessage(content=system_msg), LCHumanMessage(content=prompt_text)]
+
+    def generate():
+        try:
+            batch_answers = [None] * total_batches
+
+            if total_batches == 1:
+                messages = [SystemMessage(content=(
+                    f"{system_prompt}\n\n"
+                    "Below are all X (Twitter) posts available for this period. "
+                    "Answer the user's question using ONLY this data, following "
+                    "the instructions above. Cite specific authors and posts when "
+                    "relevant.\n\n"
+                    f"=== X POSTS ===\n{batches[0]}\n=== END OF POSTS ==="
+                )), LCHumanMessage(content=prompt_text)]
+                for chunk in chat_model.stream(messages):
+                    if chunk.content:
+                        yield chunk.content
+                return
+
+            workers = min(4, total_batches)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(_process_batch, batch, i + 1): i
+                    for i, batch in enumerate(batches)
+                }
+                done = 0
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    batch_answers[idx] = future.result()
+                    done += 1
+                    yield f"[Analyzing {done}/{total_batches}...]\n"
+
+            for chunk in chat_model.stream(_reduce_messages(batch_answers)):
+                if chunk.content:
+                    yield chunk.content
+        except Exception as stream_err:
+            logging.error("Streaming error in digest: %s", stream_err)
             yield f"\n[Error: {stream_err}]"
 
     return Response(
